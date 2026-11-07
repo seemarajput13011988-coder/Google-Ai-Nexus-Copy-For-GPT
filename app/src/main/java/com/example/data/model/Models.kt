@@ -17,7 +17,8 @@ data class User(
     val id: String,
     val fullName: String,
     val username: String,
-    val password: String,
+    val passwordHash: String,
+    val passwordSalt: String,
     val phone: String,
     val email: String,
     val address: String,
@@ -70,7 +71,7 @@ data class LocationBreadcrumb(
     val employeeId: String,
     val latitude: Double,
     val longitude: Double,
-    val accuracyMeters: Float = 5.0f,
+    val accuracyMeters: Float = 0.0f,
     val timestampMillis: Long = System.currentTimeMillis(),
     val areaNote: String = ""
 )
@@ -80,13 +81,13 @@ data class EmployeeLocation(
     val employeeName: String,
     val latitude: Double,
     val longitude: Double,
-    val accuracyMeters: Float = 5.0f,
+    val accuracyMeters: Float = 0.0f,
     val timestampMillis: Long = System.currentTimeMillis(),
     val isLive: Boolean = true,
     val locationStatus: LocationStatus = if (isLive) LocationStatus.LIVE else LocationStatus.OFFLINE,
-    val batteryPercent: Int = 85,
+    val batteryPercent: Int = -1,
     val shiftId: String = "",
-    val areaDescription: String = "Field Node Sector 4"
+    val areaDescription: String = ""
 )
 
 enum class TaskPriority {
