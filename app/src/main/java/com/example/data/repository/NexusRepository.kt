@@ -1100,7 +1100,8 @@ class NexusRepository private constructor(private val context: Context) {
         albumName: String = "General Uploads",
         durationSeconds: Int = 0,
         fileSizeBytes: Long = 0L,
-        fileUri: String = ""
+        fileUri: String = "",
+        resolution: String = ""
     ): MediaItem {
         require(_currentUser.value?.id == uploader.id) { "You can only upload media under your signed-in account." }
         val newItem = MediaItem(
@@ -1109,7 +1110,7 @@ class NexusRepository private constructor(private val context: Context) {
             type = type,
             category = category,
             fileUri = fileUri,
-            resolution = "",
+            resolution = resolution,
             fileSizeBytes = fileSizeBytes,
             durationSeconds = durationSeconds,
             tags = tags,
