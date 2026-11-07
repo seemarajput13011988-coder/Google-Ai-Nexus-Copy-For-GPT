@@ -623,8 +623,6 @@ fun AdminInvoicingTab(
                     Paid: ₹${String.format(Locale.ENGLISH, "%,.2f", inv.paidAmount)}
                     Balance Due: ₹${String.format(Locale.ENGLISH, "%,.2f", inv.balanceDue)}
                     
-                    Pay online via UPI: kbnet@icici
-                    Helpline: +91 98765 43210
                 """.trimIndent()
                 val sendIntent = Intent().apply {
                     action = Intent.ACTION_SEND
@@ -632,6 +630,20 @@ fun AdminInvoicingTab(
                     type = "text/plain"
                 }
                 context.startActivity(Intent.createChooser(sendIntent, "Share Invoice via"))
+            },
+            onExportPdf = {
+                runCatching {
+                    val pdfUri = createTaxInvoicePdf(context, inv)
+                    val pdfIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/pdf"
+                        putExtra(Intent.EXTRA_STREAM, pdfUri)
+                        putExtra(Intent.EXTRA_SUBJECT, "K&B NET SERVICE Invoice ${inv.invoiceNumber}")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(pdfIntent, "Share Invoice PDF"))
+                }.onFailure { error ->
+                    Toast.makeText(context, error.message ?: "Unable to create invoice PDF.", Toast.LENGTH_LONG).show()
+                }
             }
         )
     }
@@ -1176,7 +1188,8 @@ fun RecordInvoicePaymentDialog(
 fun TaxInvoiceViewDialog(
     invoice: IspInvoice,
     onDismiss: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onExportPdf: () -> Unit
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -1211,6 +1224,9 @@ fun TaxInvoiceViewDialog(
                         IconButton(onClick = onShare) {
                             Icon(Icons.Default.Share, contentDescription = "Share", tint = ElectricBlue)
                         }
+                        IconButton(onClick = onExportPdf) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = "Export PDF", tint = CoralRose)
+                        }
                         IconButton(onClick = onDismiss) {
                             Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.Gray)
                         }
@@ -1242,9 +1258,9 @@ fun TaxInvoiceViewDialog(
                                     letterSpacing = 1.sp
                                 )
                                 Text("High Speed Broadband & FTTH Telecom Solutions", fontSize = 11.sp, color = Color(0xFF475569))
-                                Text("Plot 42, Telecom Commercial Hub, Sector 6", fontSize = 10.sp, color = Color(0xFF64748B))
-                                Text("GSTIN: 07AAAAA0000A1Z5 • State: Delhi (07)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF334155))
-                                Text("Email: billing@kbnet.com • Support: +91 98765 43210", fontSize = 10.sp, color = Color(0xFF64748B))
+                                Text("Business address: Not configured", fontSize = 10.sp, color = Color(0xFF64748B))
+                                Text("GSTIN / Place of supply: Not configured", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF334155))
+                                Text("Billing email / support number: Not configured", fontSize = 10.sp, color = Color(0xFF64748B))
                             }
 
                             // PAID / UNPAID STAMP
