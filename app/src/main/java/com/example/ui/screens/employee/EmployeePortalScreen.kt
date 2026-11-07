@@ -219,8 +219,11 @@ fun EmployeePortalScreen(
                     }
                     IconButton(
                         onClick = {
-                            KbLocationService.stop(context)
-                            onLogout()
+                            if (todayShift?.status == ShiftStatus.ACTIVE_SHIFT) {
+                                gpsError = "End your active shift before signing out. GPS tracking will continue until the shift ends."
+                            } else {
+                                onLogout()
+                            }
                         },
                         modifier = Modifier.testTag("employee_logout_btn")
                     ) {
