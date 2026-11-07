@@ -1,11 +1,22 @@
 package com.example.ui.screens.media
 
+import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
+import android.widget.MediaController
+import android.widget.VideoView
+import androidx.core.content.FileProvider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +42,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -49,6 +63,128 @@ import com.example.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
+import java.io.File
+import java.io.FileOutputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+
+private data class LocalMediaCopy(
+    val fileUri: String,
+    val displayName: String,
+    val sizeBytes: Long,
+    val durationSeconds: Int,
+    val resolution: String
+)
+
+private fun getPickedDisplayName(context: Context, uri: Uri): String {
+    return runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0).orEmpty() else ""
+        }.orEmpty()
+    }.getOrDefault("").ifBlank { "Selected media" }
+}
+
+private suspend fun copyMediaToPrivateStorage(
+    context: Context,
+    sourceUri: Uri,
+    mediaType: MediaType
+): LocalMediaCopy = withContext(Dispatchers.IO) {
+    val resolver = context.contentResolver
+    val mime = resolver.getType(sourceUri).orEmpty()
+    val correctType = if (mediaType == MediaType.VIDEO) mime.startsWith("video/") else mime.startsWith("image/")
+    require(correctType) { "The selected file does not match the chosen photo/video type." }
+
+    val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+        ?: if (mediaType == MediaType.VIDEO) "mp4" else "jpg"
+    val directory = File(context.filesDir, "media").apply { if (!exists()) mkdirs() }
+    val destination = File(directory, "${System.currentTimeMillis()}_${UUID.randomUUID()}.$extension")
+    try {
+        val input = resolver.openInputStream(sourceUri) ?: error("Unable to open the selected media file.")
+        input.use { source ->
+            FileOutputStream(destination).use { output ->
+                val buffer = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    require(total <= 250L * 1024L * 1024L) { "Media files must be 250 MB or smaller." }
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+        require(destination.length() > 0L) { "The selected file is empty." }
+
+        var durationSeconds = 0
+        var resolution = ""
+        if (mediaType == MediaType.VIDEO) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(destination.absolutePath)
+                durationSeconds = (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.div(1000L) ?: 0L).toInt()
+                val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                if (width > 0 && height > 0) resolution = "${width}×${height}"
+            } finally {
+                runCatching { retriever.release() }
+            }
+        } else {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(destination.absolutePath, bounds)
+            if (bounds.outWidth > 0 && bounds.outHeight > 0) resolution = "${bounds.outWidth}×${bounds.outHeight}"
+        }
+
+        LocalMediaCopy(
+            fileUri = Uri.fromFile(destination).toString(),
+            displayName = getPickedDisplayName(context, sourceUri),
+            sizeBytes = destination.length(),
+            durationSeconds = durationSeconds,
+            resolution = resolution
+        )
+    } catch (error: Exception) {
+        destination.delete()
+        throw error
+    }
+}
+
+private suspend fun loadPhotoPreview(fileUri: String): Bitmap? = withContext(Dispatchers.IO) {
+    runCatching {
+        val file = File(Uri.parse(fileUri).path ?: return@runCatching null)
+        if (!file.exists()) return@runCatching null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        var sample = 1
+        while (bounds.outWidth / sample > 1800 || bounds.outHeight / sample > 1800) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample.coerceAtLeast(1) }
+        BitmapFactory.decodeFile(file.absolutePath, options)
+    }.getOrNull()
+}
+
+private fun deleteLocalMediaFile(fileUri: String) {
+    runCatching {
+        val file = File(Uri.parse(fileUri).path ?: return)
+        if (file.isFile && file.absolutePath.contains(File.separator + "media" + File.separator)) file.delete()
+    }
+}
+
+private fun shareLocalMedia(context: Context, item: MediaItem) {
+    runCatching {
+        val file = File(Uri.parse(item.fileUri).path ?: error("Media file is unavailable."))
+        require(file.exists()) { "Media file is no longer available on this device." }
+        val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val mime = if (item.type == MediaType.VIDEO) "video/*" else "image/*"
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, contentUri)
+            putExtra(Intent.EXTRA_TEXT, "K&B NET SERVICE: ${item.title}")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "Share media"))
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
