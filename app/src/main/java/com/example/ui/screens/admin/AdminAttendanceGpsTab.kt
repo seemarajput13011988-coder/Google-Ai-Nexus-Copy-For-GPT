@@ -18,6 +18,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -200,7 +203,13 @@ fun AdminAttendanceGpsTab(
 
                                 if (loc != null) {
                                     Text(
-                                        text = "GPS: ${if (loc.isLive) "Live (${loc.areaDescription})" else "Last known (${loc.areaDescription})"} • Battery ${loc.batteryPercent}%",
+                                        text = "GPS: ${when (loc.locationStatus) {
+                                            LocationStatus.LIVE -> "Live"
+                                            LocationStatus.GPS_DISABLED -> "Device GPS Off"
+                                            LocationStatus.PERMISSION_DENIED -> "Permission Denied"
+                                            LocationStatus.LOCATION_UNAVAILABLE -> "Waiting for Fix"
+                                            LocationStatus.OFFLINE -> "Offline"
+                                        }} • ${if (loc.batteryPercent in 0..100) "Battery ${loc.batteryPercent}%" else "Battery unavailable"}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = if (loc.isLive) MintEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontWeight = if (loc.isLive) FontWeight.Bold else FontWeight.Normal
@@ -477,23 +486,46 @@ fun AdminAttendanceGpsTab(
                         ) {
                             Column {
                                 Text(
-                                    text = if (loc?.isLive == true) "● LIVE (Tracking Active)" else "○ LAST KNOWN LOCATION",
+                                    text = when (loc?.locationStatus) {
+                                        LocationStatus.LIVE -> "● LIVE (Tracking Active)"
+                                        LocationStatus.GPS_DISABLED -> "● DEVICE GPS IS OFF"
+                                        LocationStatus.PERMISSION_DENIED -> "● LOCATION PERMISSION DENIED"
+                                        LocationStatus.LOCATION_UNAVAILABLE -> "● WAITING FOR GPS FIX"
+                                        LocationStatus.OFFLINE -> "○ TRACKING OFFLINE"
+                                        null -> "○ NO LOCATION DATA"
+                                    },
                                     fontWeight = FontWeight.Black,
                                     fontSize = 11.sp,
                                     color = if (loc?.isLive == true) MintEmerald else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = "Accuracy: ±${loc?.accuracyMeters ?: 5.0f}m • Battery: ${loc?.batteryPercent ?: 80}%",
+                                    text = "${if ((loc?.accuracyMeters ?: 0f) > 0f) "Accuracy: ±${loc!!.accuracyMeters}m" else "Accuracy unavailable"} • ${if ((loc?.batteryPercent ?: -1) in 0..100) "Battery: ${loc!!.batteryPercent}%" else "Battery unavailable"}",
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Text(
-                                text = loc?.areaDescription ?: "Area N/A",
+                                text = loc?.areaDescription?.ifBlank { "Address not resolved" } ?: "Location not received",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = ElectricBlue
                             )
+                        }
+                    }
+
+                    val gpsContext = LocalContext.current
+                    if (loc != null && (loc.latitude != 0.0 || loc.longitude != 0.0)) {
+                        OutlinedButton(
+                            onClick = {
+                                val mapUri = Uri.parse("geo:${loc.latitude},${loc.longitude}?q=${loc.latitude},${loc.longitude}(${Uri.encode(emp.fullName)})")
+                                val mapIntent = Intent(Intent.ACTION_VIEW, mapUri)
+                                runCatching { gpsContext.startActivity(mapIntent) }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Map, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Open current location in Google Maps")
                         }
                     }
 
@@ -535,7 +567,7 @@ fun AdminAttendanceGpsTab(
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = bc.areaNote.ifBlank { "GPS Ping Checkpoint" },
+                                                text = bc.areaNote.ifBlank { "Recorded GPS update" },
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 11.sp
                                             )
