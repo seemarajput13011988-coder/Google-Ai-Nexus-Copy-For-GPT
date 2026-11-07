@@ -150,14 +150,14 @@ private suspend fun copyMediaToPrivateStorage(
     }
 }
 
-private suspend fun loadPhotoPreview(fileUri: String): Bitmap? = withContext(Dispatchers.IO) {
+private suspend fun loadPhotoPreview(fileUri: String, maxDimension: Int = 1800): Bitmap? = withContext(Dispatchers.IO) {
     runCatching {
         val file = File(Uri.parse(fileUri).path ?: return@runCatching null)
         if (!file.exists()) return@runCatching null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         var sample = 1
-        while (bounds.outWidth / sample > 1800 || bounds.outHeight / sample > 1800) sample *= 2
+        while (bounds.outWidth / sample > maxDimension || bounds.outHeight / sample > maxDimension) sample *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sample.coerceAtLeast(1) }
         BitmapFactory.decodeFile(file.absolutePath, options)
     }.getOrNull()
@@ -597,6 +597,9 @@ fun MediaCardGridItem(
     item: MediaItem,
     onClick: () -> Unit
 ) {
+    val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = item.fileUri) {
+        value = if (item.type == MediaType.PHOTO && item.fileUri.isNotBlank()) loadPhotoPreview(item.fileUri, 520) else null
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -624,26 +627,24 @@ fun MediaCardGridItem(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                // Procedural artwork icon depending on asset type
-                when (item.visualAssetType) {
-                    "ONT_POWER" -> Icon(Icons.Default.SettingsInputAntenna, contentDescription = null, tint = VividCyan, modifier = Modifier.size(44.dp))
-                    "FIBER_TRAY" -> Icon(Icons.Default.Cable, contentDescription = null, tint = GoldenAmber, modifier = Modifier.size(44.dp))
-                    "ROUTER_LABEL" -> Icon(Icons.Default.Router, contentDescription = null, tint = MintEmerald, modifier = Modifier.size(44.dp))
-                    "NOC_RACK" -> Icon(Icons.Default.Dns, contentDescription = null, tint = ElectricBlue, modifier = Modifier.size(44.dp))
-                    "JOB_SHEET" -> Icon(Icons.Default.Description, contentDescription = null, tint = CoralRose, modifier = Modifier.size(44.dp))
-                    "VIDEO_SPLICING", "VIDEO_ROUTER", "VIDEO_POLE" -> {
-                        Box(
-                            modifier = Modifier
-                                .size(46.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.6f))
-                                .border(1.5.dp, Color.White, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
+                if (thumbnail != null) {
+                    Image(
+                        bitmap = thumbnail!!.asImageBitmap(),
+                        contentDescription = item.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (item.type == MediaType.VIDEO) {
+                    Icon(Icons.Default.PlayCircle, contentDescription = "Video", tint = Color.White, modifier = Modifier.size(46.dp))
+                } else {
+                    when (item.visualAssetType) {
+                        "ONT_POWER" -> Icon(Icons.Default.SettingsInputAntenna, contentDescription = null, tint = VividCyan, modifier = Modifier.size(44.dp))
+                        "FIBER_TRAY" -> Icon(Icons.Default.Cable, contentDescription = null, tint = GoldenAmber, modifier = Modifier.size(44.dp))
+                        "ROUTER_LABEL" -> Icon(Icons.Default.Router, contentDescription = null, tint = MintEmerald, modifier = Modifier.size(44.dp))
+                        "NOC_RACK" -> Icon(Icons.Default.Dns, contentDescription = null, tint = ElectricBlue, modifier = Modifier.size(44.dp))
+                        "JOB_SHEET" -> Icon(Icons.Default.Description, contentDescription = null, tint = CoralRose, modifier = Modifier.size(44.dp))
+                        else -> Icon(Icons.Default.Image, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(40.dp))
                     }
-                    else -> Icon(Icons.Default.Image, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(40.dp))
                 }
 
                 // Type Badge (PHOTO / VIDEO with duration)
@@ -712,6 +713,9 @@ fun MediaCardListItem(
     item: MediaItem,
     onClick: () -> Unit
 ) {
+    val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = item.fileUri) {
+        value = if (item.type == MediaType.PHOTO && item.fileUri.isNotBlank()) loadPhotoPreview(item.fileUri, 160) else null
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -734,12 +738,21 @@ fun MediaCardListItem(
                     .background(Color(0xFF0F172A)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = if (item.type == MediaType.VIDEO) Icons.Default.PlayCircle else Icons.Default.Image,
-                    contentDescription = null,
-                    tint = VividCyan,
-                    modifier = Modifier.size(24.dp)
-                )
+                if (thumbnail != null) {
+                    Image(
+                        bitmap = thumbnail!!.asImageBitmap(),
+                        contentDescription = item.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (item.type == MediaType.VIDEO) Icons.Default.PlayCircle else Icons.Default.Image,
+                        contentDescription = null,
+                        tint = VividCyan,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
