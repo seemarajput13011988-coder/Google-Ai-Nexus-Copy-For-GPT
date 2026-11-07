@@ -542,7 +542,7 @@ fun MediaHubScreen(
             customers = customers,
             currentUser = currentUser,
             onDismiss = { showUploadDialog = false },
-            onUpload = { title, type, category, desc, tags, custId, custName, album, dur, bytes ->
+            onUpload = { title, type, category, desc, tags, custId, custName, album, fileUri, resolution, dur, bytes ->
                 currentUser?.let { uploader ->
                     repository.uploadMediaItem(
                         title = title,
@@ -555,7 +555,9 @@ fun MediaHubScreen(
                         customerName = custName,
                         albumName = album,
                         durationSeconds = dur,
-                        fileSizeBytes = bytes
+                        fileSizeBytes = bytes,
+                        fileUri = fileUri,
+                        resolution = resolution
                     )
                 }
                 showUploadDialog = false
@@ -568,15 +570,9 @@ fun MediaHubScreen(
         PhotoPreviewDialog(
             item = item,
             onDismiss = { selectedMediaForPreview = null },
-            onShare = {
-                val shareIntent = Intent().apply {
-                    action = Intent.ACTION_SEND
-                    putExtra(Intent.EXTRA_TEXT, "K&B NET SERVICE Media Evidence: ${item.title}\nCategory: ${item.category}\nUploaded by: ${item.uploaderName}")
-                    type = "text/plain"
-                }
-                context.startActivity(Intent.createChooser(shareIntent, "Share Media"))
-            },
+            onShare = { shareLocalMedia(context, item) },
             onDelete = {
+                deleteLocalMediaFile(item.fileUri)
                 repository.deleteMediaItem(item.id)
                 selectedMediaForPreview = null
             }
@@ -588,14 +584,7 @@ fun MediaHubScreen(
         VideoPlayerDialog(
             item = item,
             onDismiss = { selectedVideoForPlayback = null },
-            onShare = {
-                val shareIntent = Intent().apply {
-                    action = Intent.ACTION_SEND
-                    putExtra(Intent.EXTRA_TEXT, "K&B NET SERVICE Video Recording: ${item.title}\nDuration: ${item.durationSeconds}s\nUploaded by: ${item.uploaderName}")
-                    type = "text/plain"
-                }
-                context.startActivity(Intent.createChooser(shareIntent, "Share Video"))
-            }
+            onShare = { shareLocalMedia(context, item) }
         )
     }
 }
@@ -792,28 +781,34 @@ fun UploadMediaDialog(
         custId: String,
         custName: String,
         album: String,
+        fileUri: String,
+        resolution: String,
         durationSec: Int,
         fileSizeBytes: Long
     ) -> Unit
 ) {
+    val context = LocalContext.current
+    val uploadScope = rememberCoroutineScope()
     var title by remember { mutableStateOf("") }
     var mediaType by remember { mutableStateOf(MediaType.PHOTO) }
     var selectedCategory by remember { mutableStateOf(MediaCategory.CUSTOMER_INSTALLATION) }
     var description by remember { mutableStateOf("") }
-    var tagsInput by remember { mutableStateOf("FTTH, Fiber, Delhi") }
+    var tagsInput by remember { mutableStateOf("") }
     var selectedCustomer by remember { mutableStateOf<IspCustomer?>(null) }
-    var albumName by remember { mutableStateOf("Customer Installations 2026") }
-    var isSimulatedUploadProgress by remember { mutableFloatStateOf(1f) }
+    var albumName by remember { mutableStateOf("") }
+    var selectedUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedFileName by remember { mutableStateOf("") }
     var isUploading by remember { mutableStateOf(false) }
+    var uploadError by remember { mutableStateOf<String?>(null) }
 
-    // Android Zero-Permission Photo/Video Picker Integration
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            if (title.isBlank()) {
-                title = "Evidence Upload (${SimpleDateFormat("dd-MM-yy HH:mm", Locale.ENGLISH).format(Date())})"
-            }
+            selectedUri = uri
+            selectedFileName = getPickedDisplayName(context, uri)
+            uploadError = null
+            if (title.isBlank()) title = selectedFileName.substringBeforeLast('.', selectedFileName)
         }
     }
 
@@ -891,6 +886,19 @@ fun UploadMediaDialog(
                                 if (mediaType == MediaType.VIDEO) "Select Video File from Device" else "Select Photo / Capture with Camera",
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                    }
+
+                    item {
+                        if (selectedFileName.isNotBlank()) {
+                            Text(
+                                text = "Selected: $selectedFileName",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        uploadError?.let {
+                            Text(it, color = CoralRose, style = MaterialTheme.typography.bodySmall)
                         }
                     }
 
@@ -981,30 +989,46 @@ fun UploadMediaDialog(
                     }
                     Button(
                         onClick = {
-                            if (title.isBlank()) {
-                                title = "Field Media Evidence (${SimpleDateFormat("dd-MM-yy", Locale.ENGLISH).format(Date())})"
+                            val sourceUri = selectedUri
+                            if (sourceUri == null) {
+                                uploadError = "Select a photo or video before saving."
+                            } else {
+                                uploadScope.launch {
+                                    isUploading = true
+                                    uploadError = null
+                                    try {
+                                        val copied = copyMediaToPrivateStorage(context, sourceUri, mediaType)
+                                        val tagList = tagsInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                                        onUpload(
+                                            title.ifBlank { copied.displayName },
+                                            mediaType,
+                                            selectedCategory,
+                                            description,
+                                            tagList,
+                                            selectedCustomer?.id ?: "",
+                                            selectedCustomer?.fullName ?: "",
+                                            albumName.ifBlank { "General Uploads" },
+                                            copied.fileUri,
+                                            copied.resolution,
+                                            copied.durationSeconds,
+                                            copied.sizeBytes
+                                        )
+                                    } catch (error: Exception) {
+                                        uploadError = error.message ?: "Unable to save this media file."
+                                    } finally {
+                                        isUploading = false
+                                    }
+                                }
                             }
-                            val tagList = tagsInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                            onUpload(
-                                title,
-                                mediaType,
-                                selectedCategory,
-                                description,
-                                tagList,
-                                selectedCustomer?.id ?: "",
-                                selectedCustomer?.fullName ?: "",
-                                albumName,
-                                if (mediaType == MediaType.VIDEO) 120 else 0,
-                                if (mediaType == MediaType.VIDEO) 45_000_000L else 3_200_000L
-                            )
                         },
+                        enabled = selectedUri != null && !isUploading,
                         colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
                         modifier = Modifier.weight(1.5f),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.CloudUpload, contentDescription = null)
+                        Icon(Icons.Default.Save, contentDescription = null)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Upload to Cloud", fontWeight = FontWeight.Bold)
+                        Text(if (isUploading) "Saving…" else "Save to Media Library", fontWeight = FontWeight.Bold)
                     }
                 }
             }
