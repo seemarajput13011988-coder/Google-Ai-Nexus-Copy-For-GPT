@@ -112,7 +112,7 @@ data class TaskItem(
     val description: String,
     val assignedEmployeeId: String,
     val assignedEmployeeName: String,
-    val createdBy: String = "Super Admin",
+    val createdBy: String = "",
     val priority: TaskPriority = TaskPriority.MEDIUM,
     val status: TaskStatus = TaskStatus.PENDING,
     val deadlineMillis: Long,
@@ -186,7 +186,7 @@ data class AccountingTransaction(
     val dateMillis: Long = System.currentTimeMillis(),
     val description: String,
     val referenceId: String = "",
-    val recordedBy: String = "Admin"
+    val recordedBy: String = ""
 )
 
 data class SalarySlip(
@@ -254,7 +254,7 @@ data class IspInvoice(
     val billingPeriodEnd: String = "",
     val notes: String = "Thank you for choosing K&B NET SERVICE.",
     val payments: List<InvoicePaymentRecord> = emptyList(),
-    val createdBy: String = "Super Admin"
+    val createdBy: String = ""
 )
 
 enum class InventoryCategory {
@@ -401,6 +401,6 @@ data class MediaAlbum(
     val description: String,
     val category: MediaCategory = MediaCategory.CUSTOMER_INSTALLATION,
     val itemCount: Int = 0,
-    val createdBy: String = "Admin",
+    val createdBy: String = "",
     val createdAtMillis: Long = System.currentTimeMillis()
 )
