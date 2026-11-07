@@ -329,6 +329,7 @@ class NexusRepository private constructor(private val context: Context) {
 
     fun updateEmployeeDetails(updatedUser: User) {
         val actor = _currentUser.value ?: return
+        if (!isAdministrator()) return
         if (actor.role != UserRole.SUPER_ADMIN && updatedUser.role != UserRole.EMPLOYEE) return
         if (updatedUser.role == UserRole.SUPER_ADMIN && actor.role != UserRole.SUPER_ADMIN) return
         _users.value = _users.value.map { if (it.id == updatedUser.id) updatedUser else it }
@@ -887,7 +888,8 @@ class NexusRepository private constructor(private val context: Context) {
         val totalAmount = discountedSubtotal + gstTotal
 
         val seq = _invoices.value.size + 1
-        val invoiceNo = "INV-2026-${String.format("%04d", seq)}"
+        val invoiceYear = getKolkataCalendar().get(Calendar.YEAR)
+        val invoiceNo = "INV-${invoiceYear}-${String.format("%04d", seq)}"
 
         val newInvoice = IspInvoice(
             id = "inv_" + UUID.randomUUID().toString().take(8),
@@ -912,7 +914,7 @@ class NexusRepository private constructor(private val context: Context) {
             billingPeriodStart = billingPeriodStart,
             billingPeriodEnd = billingPeriodEnd,
             notes = notes,
-            createdBy = createdBy
+            createdBy = _currentUser.value?.fullName ?: createdBy
         )
 
         _invoices.value = listOf(newInvoice) + _invoices.value
@@ -934,9 +936,6 @@ class NexusRepository private constructor(private val context: Context) {
 
         if (invoice.status == InvoiceStatus.PAID) {
             return Result.failure(Exception("Invoice is already fully paid."))
-        }
-        if (amount <= 0.0) {
-            return Result.failure(Exception("Payment amount must be greater than zero."))
         }
 
         val newPaid = (invoice.paidAmount + amount).coerceAtMost(invoice.totalAmount)
@@ -972,7 +971,7 @@ class NexusRepository private constructor(private val context: Context) {
                 paymentMode = paymentMode,
                 description = "Payment for ${invoice.invoiceNumber} (${invoice.customerName}) - $note",
                 referenceId = invoice.invoiceNumber,
-                recordedBy = recordedBy
+                recordedBy = _currentUser.value?.fullName ?: recordedBy
             )
         )
 
@@ -995,6 +994,9 @@ class NexusRepository private constructor(private val context: Context) {
         accuracy: Float,
         note: String = ""
     ) {
+        val actor = _currentUser.value ?: return
+        if (actor.id != employeeId && !isAdministrator()) return
+        if (!latitude.isFinite() || !longitude.isFinite() || latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return
         val bc = LocationBreadcrumb(
             id = "bc_" + UUID.randomUUID().toString().take(8),
             employeeId = employeeId,
@@ -1008,12 +1010,15 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun getLocationBreadcrumbsForEmployee(employeeId: String): List<LocationBreadcrumb> {
+        val actor = _currentUser.value ?: return emptyList()
+        if (actor.id != employeeId && !isAdministrator()) return emptyList()
         return _locationBreadcrumbs.value.filter { it.employeeId == employeeId }
     }
 
     // --- Staff Management Admin Controls ---
 
     fun suspendEmployeeAccount(userId: String, suspend: Boolean) {
+        if (!isAdministrator()) return
         val actor = _currentUser.value ?: return
         val target = _users.value.firstOrNull { it.id == userId } ?: return
         if (actor.role != UserRole.SUPER_ADMIN && target.role != UserRole.EMPLOYEE) return
@@ -1072,7 +1077,7 @@ class NexusRepository private constructor(private val context: Context) {
         relatedJobId: String = "",
         albumName: String = "General Uploads",
         durationSeconds: Int = 0,
-        fileSizeBytes: Long = 2_500_000L,
+        fileSizeBytes: Long = 0L,
         fileUri: String = ""
     ): MediaItem {
         require(_currentUser.value?.id == uploader.id) { "You can only upload media under your signed-in account." }
@@ -1082,7 +1087,7 @@ class NexusRepository private constructor(private val context: Context) {
             type = type,
             category = category,
             fileUri = fileUri,
-            resolution = if (type == MediaType.VIDEO) "1920x1080 (30fps)" else "1920x1080",
+            resolution = "",
             fileSizeBytes = fileSizeBytes,
             durationSeconds = durationSeconds,
             tags = tags,
@@ -1129,7 +1134,7 @@ class NexusRepository private constructor(private val context: Context) {
             name = name.trim(),
             description = description.trim(),
             category = category,
-            createdBy = createdBy,
+            createdBy = _currentUser.value?.fullName ?: createdBy,
             createdAtMillis = System.currentTimeMillis()
         )
         _mediaAlbums.value = _mediaAlbums.value + album
