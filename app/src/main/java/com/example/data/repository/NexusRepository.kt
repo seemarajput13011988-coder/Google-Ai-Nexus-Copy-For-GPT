@@ -569,15 +569,18 @@ class NexusRepository private constructor(private val context: Context) {
         val now = System.currentTimeMillis()
         val todayIso = getKolkataDateIso(now)
         _attendanceRecords.value = _attendanceRecords.value.map { record ->
-            if (record.status != ShiftStatus.ACTIVE_SHIFT || record.adminOverrideReason.isNotBlank()) {
-                return@map record
-            }
+            if (record.status != ShiftStatus.ACTIVE_SHIFT) return@map record
             val shiftDay = getKolkataCalendar().apply { timeInMillis = record.shiftStartTimeMillis }
             shiftDay.set(Calendar.HOUR_OF_DAY, 19)
             shiftDay.set(Calendar.MINUTE, 0)
             shiftDay.set(Calendar.SECOND, 0)
             shiftDay.set(Calendar.MILLISECOND, 0)
-            val scheduledClose = shiftDay.timeInMillis
+            val regularClose = shiftDay.timeInMillis
+            // An admin may start a shift after 7 PM; give that override an 8-hour window.
+            // All shifts that start before 7 PM still close at 7 PM, including early overrides.
+            val scheduledClose = if (record.shiftStartTimeMillis >= regularClose) {
+                record.shiftStartTimeMillis + 8L * 60L * 60L * 1000L
+            } else regularClose
             if (record.dateIso < todayIso || now >= scheduledClose) {
                 val closeTime = maxOf(record.shiftStartTimeMillis, scheduledClose)
                 val duration = ((closeTime - record.shiftStartTimeMillis) / 60000).coerceAtLeast(0)
