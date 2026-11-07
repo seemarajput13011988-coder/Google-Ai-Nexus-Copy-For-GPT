@@ -897,7 +897,7 @@ fun UploadMediaDialog(
                             Icon(Icons.Default.AddPhotoAlternate, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                if (mediaType == MediaType.VIDEO) "Select Video File from Device" else "Select Photo / Capture with Camera",
+                                if (mediaType == MediaType.VIDEO) "Select Video from Device" else "Select Photo from Device",
                                 fontWeight = FontWeight.Bold
                             )
                         }
