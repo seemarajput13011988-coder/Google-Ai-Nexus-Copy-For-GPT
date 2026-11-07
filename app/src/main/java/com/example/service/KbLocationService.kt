@@ -53,6 +53,8 @@ class KbLocationService : Service() {
     private var employeeId: String = ""
     private var employeeName: String = ""
     private var shiftId: String = ""
+    private var lastBreadcrumbMillis: Long = 0L
+    private var lastBreadcrumbLocation: Location? = null
     private var receiverRegistered = false
     private val autoCloseHandler = Handler(Looper.getMainLooper())
     private val autoCloseRunnable = object : Runnable {
@@ -280,7 +282,12 @@ class KbLocationService : Service() {
                     areaDescription = ""
                 )
                 KbNexusApp.instance.repository.updateLiveLocation(record)
-                KbNexusApp.instance.repository.addLocationBreadcrumb(record)
+                val previousBreadcrumb = lastBreadcrumbLocation
+                if (previousBreadcrumb == null || now - lastBreadcrumbMillis >= 30_000L || previousBreadcrumb.distanceTo(fix) >= 25f) {
+                    KbNexusApp.instance.repository.addLocationBreadcrumb(record)
+                    lastBreadcrumbLocation = Location(fix)
+                    lastBreadcrumbMillis = now
+                }
                 val time = SimpleDateFormat("hh:mm:ss a", Locale.getDefault()).format(Date(now))
                 updateNotification("Live GPS fix received at $time • ±${fix.accuracy.toInt()} m")
             }
