@@ -8,7 +8,7 @@ The current Compose layout is retained. It includes:
 
 - **Admin:** dashboard, employee approvals and management, attendance/GPS, shift overrides, CRM and ISP plans, invoicing, finance, inventory, tasks, complaints, requests, announcements and team chat.
 - **Employee:** shift attendance, live GPS status, assigned tasks, support tickets, photo/video media, team chat, requests, profile and salary information.
-- **Media:** photo/video records, categories, albums and approval states.
+- **Media:** actual photo/video selection, copy into app-private storage, real thumbnails, image preview, Android video playback, FileProvider sharing, categories, albums and approval states.
 
 ## Clean data and account security
 
@@ -34,7 +34,7 @@ Android can still stop background work after a user force-stops the app, revokes
 
 ## Current backend boundary
 
-This build currently uses encrypted **on-device** persistence. It does not yet synchronize employee records or GPS points between different phones. Cross-device live GPS, remote admin shift commands, shared chat and centrally enforced authorization require a configured backend (Firebase Auth/Realtime Database or another secured API), deployed security rules, and a registered Google Maps Android API key. Do not treat local role checks as server-side authorization.
+This build currently uses encrypted **on-device** persistence. Media files are stored in the app-private files directory. Neither business records nor media files are synchronized between different phones yet. Cross-device live GPS, remote admin shift commands, shared chat and centrally enforced authorization require a configured backend (Firebase Auth/Realtime Database or another secured API), deployed security rules, and a registered Google Maps Android API key. Do not treat local role checks as server-side authorization.
 
 ## Build and test
 
