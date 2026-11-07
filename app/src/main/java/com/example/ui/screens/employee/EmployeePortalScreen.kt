@@ -43,6 +43,9 @@ import com.example.ui.components.PriorityBadge
 import com.example.ui.components.StatusBadge
 import com.example.ui.screens.media.MediaHubScreen
 import com.example.ui.theme.*
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,17 +86,58 @@ fun EmployeePortalScreen(
         salaries.firstOrNull { it.employeeId == employee.id }
     }
 
-    // Permission launcher for Location and Notifications
+    var gpsError by remember { mutableStateOf<String?>(null) }
+    var isStartingShift by remember { mutableStateOf(false) }
+    var isEndingShift by remember { mutableStateOf(false) }
+    val employeeLocations by repository.employeeLocations.collectAsState()
+    val myLocation = remember(employeeLocations, employee.id) {
+        employeeLocations.firstOrNull { it.employeeId == employee.id }
+    }
+
+    // A shift is created only after a real device GPS fix is received.
+    val beginShiftWithGps: () -> Unit = {
+        gpsError = null
+        isStartingShift = true
+        val locationClient = LocationServices.getFusedLocationProviderClient(context)
+        locationClient.getCurrentLocation(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            CancellationTokenSource().token
+        ).addOnSuccessListener { location ->
+            isStartingShift = false
+            if (location == null || location.accuracy > 100f) {
+                gpsError = "A reliable GPS fix is not available yet. Turn on Location and try again."
+            } else {
+                val result = repository.startEmployeeShift(employee, location.latitude, location.longitude)
+                result.onSuccess { shift ->
+                    KbLocationService.start(context, employee.id, employee.fullName, shift.id)
+                }.onFailure { error ->
+                    gpsError = error.message ?: "Unable to start shift."
+                }
+            }
+        }.addOnFailureListener { error ->
+            isStartingShift = false
+            gpsError = error.message ?: "Unable to read the device location."
+        }
+    }
+
+    // Request location and notification permissions before starting the foreground service.
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val fineLocationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
         val coarseLocationGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
         if (fineLocationGranted || coarseLocationGranted) {
-            val result = repository.startEmployeeShift(employee)
-            if (result.isSuccess) {
-                KbLocationService.start(context, employee.id, employee.fullName, result.getOrNull()?.id ?: "")
-            }
+            beginShiftWithGps()
+        } else {
+            gpsError = "Location permission is required to start an attendance shift."
+        }
+    }
+
+    LaunchedEffect(todayShift?.id, todayShift?.status) {
+        if (todayShift?.status == ShiftStatus.ACTIVE_SHIFT) {
+            KbLocationService.start(context, employee.id, employee.fullName, todayShift.id)
+        } else {
+            KbLocationService.stop(context)
         }
     }
 
@@ -341,29 +385,40 @@ fun EmployeePortalScreen(
 
                                         Button(
                                             onClick = {
-                                                val permissions = mutableListOf(
-                                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                                    Manifest.permission.ACCESS_COARSE_LOCATION
-                                                )
-                                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                                    permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+                                                val fineGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                                val coarseGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                                if (fineGranted || coarseGranted) {
+                                                    beginShiftWithGps()
+                                                } else {
+                                                    val permissions = mutableListOf(
+                                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                                    )
+                                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                                        permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+                                                    }
+                                                    permissionLauncher.launch(permissions.toTypedArray())
                                                 }
-                                                permissionLauncher.launch(permissions.toTypedArray())
                                             },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(52.dp)
                                                 .testTag("start_shift_button"),
                                             shape = RoundedCornerShape(12.dp),
+                                            enabled = !isStartingShift,
                                             colors = ButtonDefaults.buttonColors(containerColor = MintEmerald)
                                         ) {
                                             Icon(Icons.Default.PlayCircle, contentDescription = null)
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "Start Daily Shift",
+                                                text = if (isStartingShift) "Getting GPS Fix…" else "Start Daily Shift",
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 16.sp
                                             )
+                                        }
+                                        gpsError?.let { message ->
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            Text(message, color = CoralRose, style = MaterialTheme.typography.bodySmall)
                                         }
                                     } else if (todayShift.status == ShiftStatus.ACTIVE_SHIFT) {
                                         // SHIFT IN PROGRESS (ACTIVE)
@@ -428,13 +483,25 @@ fun EmployeePortalScreen(
                                                 Spacer(modifier = Modifier.width(10.dp))
                                                 Column {
                                                     Text(
-                                                        text = "Live Foreground GPS Active",
+                                                        text = when (myLocation?.locationStatus) {
+                                                            LocationStatus.LIVE -> "Live GPS Active"
+                                                            LocationStatus.GPS_DISABLED -> "Device Location is OFF"
+                                                            LocationStatus.PERMISSION_DENIED -> "Location Permission Required"
+                                                            LocationStatus.LOCATION_UNAVAILABLE -> "Waiting for GPS Fix"
+                                                            LocationStatus.OFFLINE, null -> "GPS Status Unavailable"
+                                                        },
                                                         fontWeight = FontWeight.Black,
                                                         fontSize = 13.sp,
                                                         color = MintEmerald
                                                     )
                                                     Text(
-                                                        text = "Continuous tracking active in background with persistent notification",
+                                                        text = when (myLocation?.locationStatus) {
+                                                            LocationStatus.LIVE -> "Last fix: ${NexusRepository.formatKolkataTime(myLocation.timestampMillis)} • Accuracy ±${myLocation.accuracyMeters.toInt()} m"
+                                                            LocationStatus.GPS_DISABLED -> "Turn on Location to resume shift tracking."
+                                                            LocationStatus.PERMISSION_DENIED -> "Grant location permission to resume tracking."
+                                                            LocationStatus.LOCATION_UNAVAILABLE -> "Waiting for the device to provide a location fix."
+                                                            LocationStatus.OFFLINE, null -> "Location updates have not been received yet."
+                                                        },
                                                         fontSize = 11.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
@@ -447,20 +514,39 @@ fun EmployeePortalScreen(
                                         // PROMINENT END SHIFT BUTTON
                                         Button(
                                             onClick = {
-                                                repository.endEmployeeShift(todayShift.id)
-                                                KbLocationService.stop(context)
+                                                if (!isEndingShift) {
+                                                    isEndingShift = true
+                                                    val locationClient = LocationServices.getFusedLocationProviderClient(context)
+                                                    locationClient.getCurrentLocation(
+                                                        Priority.PRIORITY_HIGH_ACCURACY,
+                                                        CancellationTokenSource().token
+                                                    ).addOnSuccessListener { location ->
+                                                        repository.endEmployeeShift(
+                                                            todayShift.id,
+                                                            location?.latitude ?: 0.0,
+                                                            location?.longitude ?: 0.0
+                                                        )
+                                                        KbLocationService.stop(context)
+                                                        isEndingShift = false
+                                                    }.addOnFailureListener {
+                                                        repository.endEmployeeShift(todayShift.id, 0.0, 0.0)
+                                                        KbLocationService.stop(context)
+                                                        isEndingShift = false
+                                                    }
+                                                }
                                             },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(52.dp)
                                                 .testTag("end_shift_button"),
                                             shape = RoundedCornerShape(12.dp),
+                                            enabled = !isEndingShift,
                                             colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
                                         ) {
                                             Icon(Icons.Default.StopCircle, contentDescription = null)
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "End Shift",
+                                                text = if (isEndingShift) "Ending Shift…" else "End Shift",
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 16.sp
                                             )
