@@ -14,6 +14,7 @@ import android.location.LocationManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -23,6 +24,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.model.EmployeeLocation
 import com.example.data.model.LocationStatus
+import com.example.data.repository.NexusRepository
 import com.example.data.storage.EncryptedStateStore
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
@@ -51,6 +53,23 @@ class KbLocationService : Service() {
     private var employeeName: String = ""
     private var shiftId: String = ""
     private var receiverRegistered = false
+    private val autoCloseHandler = Handler(Looper.getMainLooper())
+    private val autoCloseRunnable = object : Runnable {
+        override fun run() {
+            if (employeeId.isBlank() || shiftId.isBlank()) return
+            val calendar = NexusRepository.getKolkataCalendar()
+            val afterRegularEnd = calendar.get(android.icu.util.Calendar.HOUR_OF_DAY) >= 19
+            if (afterRegularEnd) {
+                val repository = KbNexusApp.instance.repository
+                repository.checkAndAutoCloseExpiredShifts()
+                if (!repository.isShiftActive(shiftId)) {
+                    stop(this@KbLocationService)
+                    return
+                }
+            }
+            autoCloseHandler.postDelayed(this, 60_000L)
+        }
+    }
 
     private val providersReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -87,6 +106,13 @@ class KbLocationService : Service() {
 
         fun stop(context: Context) {
             val store = EncryptedStateStore(context.applicationContext)
+            val activeEmployeeId = store.getString(KEY_EMPLOYEE_ID).orEmpty()
+            if (activeEmployeeId.isNotBlank()) {
+                runCatching {
+                    (context.applicationContext as KbNexusApp).repository
+                        .updateLocationStatus(activeEmployeeId, LocationStatus.OFFLINE)
+                }
+            }
             store.putString(KEY_EMPLOYEE_ID, "")
             store.putString(KEY_EMPLOYEE_NAME, "")
             store.putString(KEY_SHIFT_ID, "")
@@ -127,6 +153,8 @@ class KbLocationService : Service() {
 
         startForeground(NOTIFICATION_ID, buildNotification("Checking GPS permission and device location…"))
         refreshLocationState()
+        autoCloseHandler.removeCallbacks(autoCloseRunnable)
+        autoCloseHandler.postDelayed(autoCloseRunnable, 60_000L)
         return START_STICKY
     }
 
@@ -283,6 +311,7 @@ class KbLocationService : Service() {
     }
 
     override fun onDestroy() {
+        autoCloseHandler.removeCallbacks(autoCloseRunnable)
         stopLocationUpdates()
         if (receiverRegistered) {
             runCatching { unregisterReceiver(providersReceiver) }
