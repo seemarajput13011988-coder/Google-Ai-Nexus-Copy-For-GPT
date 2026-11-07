@@ -27,15 +27,26 @@ class NexusRepository private constructor(private val context: Context) {
     private val stateStore = EncryptedStateStore(context)
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
     private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var persistenceEnabled = true
 
     private inline fun <reified T : Any> decodeList(key: String): List<T> {
         val type = Types.newParameterizedType(List::class.java, T::class.java)
-        return runCatching {
-            moshi.adapter<List<T>>(type).fromJson(stateStore.getString(key) ?: "[]") ?: emptyList()
-        }.getOrDefault(emptyList())
+        return try {
+            val stored = stateStore.getString(key)
+            if (stored == null && stateStore.contains(key)) {
+                persistenceEnabled = false
+                emptyList()
+            } else {
+                moshi.adapter<List<T>>(type).fromJson(stored ?: "[]") ?: emptyList()
+            }
+        } catch (_: Exception) {
+            persistenceEnabled = false
+            emptyList()
+        }
     }
 
     private inline fun <reified T : Any> persistList(key: String, flow: StateFlow<List<T>>) {
+        if (!persistenceEnabled) return
         val type = Types.newParameterizedType(List::class.java, T::class.java)
         val adapter = moshi.adapter<List<T>>(type)
         persistenceScope.launch {
