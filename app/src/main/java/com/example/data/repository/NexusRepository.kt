@@ -317,7 +317,7 @@ class NexusRepository private constructor(private val context: Context) {
             designation = designation.trim(),
             department = department.trim(),
             joiningDate = getKolkataDateIso(),
-            baseSalary = 24000.0,
+            baseSalary = 0.0,
             role = UserRole.EMPLOYEE,
             status = AccountStatus.PENDING_APPROVAL,
             registrationReason = reason.trim(),
