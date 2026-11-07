@@ -282,17 +282,17 @@ fun GpsRadarMap(
                                 if (focusedLoc.isLive) {
                                     StatusBadge(text = "LIVE TRACKING", color = MintEmerald)
                                 } else {
-                                    StatusBadge(text = "LAST KNOWN", color = GoldenAmber)
+                                    StatusBadge(text = when (focusedLoc.locationStatus) { LocationStatus.GPS_DISABLED -> "GPS OFF"; LocationStatus.PERMISSION_DENIED -> "PERMISSION DENIED"; LocationStatus.LOCATION_UNAVAILABLE -> "WAITING FOR FIX"; LocationStatus.OFFLINE -> "OFFLINE"; LocationStatus.LIVE -> "LIVE" }, color = GoldenAmber)
                                 }
                             }
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Zone: ${focusedLoc.areaDescription}",
+                                text = "Zone: ${focusedLoc.areaDescription.ifBlank { "Address not resolved" }}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "Coordinates: ${String.format("%.4f", focusedLoc.latitude)}, ${String.format("%.4f", focusedLoc.longitude)} • Accuracy ±${focusedLoc.accuracyMeters.toInt()}m",
+                                text = if (focusedLoc.latitude != 0.0 || focusedLoc.longitude != 0.0) "Coordinates: ${String.format("%.4f", focusedLoc.latitude)}, ${String.format("%.4f", focusedLoc.longitude)} • ${if (focusedLoc.accuracyMeters > 0f) "Accuracy ±${focusedLoc.accuracyMeters.toInt()}m" else "Accuracy unavailable"}" else "Coordinates unavailable until the first GPS fix",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f)
                             )
@@ -308,7 +308,7 @@ fun GpsRadarMap(
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
-                                    text = "${focusedLoc.batteryPercent}%",
+                                    text = if (focusedLoc.batteryPercent in 0..100) "${focusedLoc.batteryPercent}%" else "N/A",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Black
                                 )
