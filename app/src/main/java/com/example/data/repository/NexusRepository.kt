@@ -344,8 +344,11 @@ class NexusRepository private constructor(private val context: Context) {
     fun updateEmployeeDetails(updatedUser: User) {
         val actor = _currentUser.value ?: return
         if (!isAdministrator()) return
-        if (actor.role != UserRole.SUPER_ADMIN && updatedUser.role != UserRole.EMPLOYEE) return
-        if (updatedUser.role == UserRole.SUPER_ADMIN && actor.role != UserRole.SUPER_ADMIN) return
+        val existing = _users.value.firstOrNull { it.id == updatedUser.id } ?: return
+        // There is exactly one Super Admin: the initial owner account cannot be reassigned or duplicated.
+        if (updatedUser.role == UserRole.SUPER_ADMIN && existing.role != UserRole.SUPER_ADMIN) return
+        if (existing.role == UserRole.SUPER_ADMIN && updatedUser.role != UserRole.SUPER_ADMIN) return
+        if (actor.role != UserRole.SUPER_ADMIN && (existing.role != UserRole.EMPLOYEE || updatedUser.role != UserRole.EMPLOYEE)) return
         _users.value = _users.value.map { if (it.id == updatedUser.id) updatedUser else it }
         if (_currentUser.value?.id == updatedUser.id) {
             _currentUser.value = updatedUser
