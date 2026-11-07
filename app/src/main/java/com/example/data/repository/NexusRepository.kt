@@ -648,10 +648,14 @@ class NexusRepository private constructor(private val context: Context) {
     // --- Task Management ---
 
     fun addTask(task: TaskItem) {
+        if (!isAdministrator()) return
         _tasks.value = listOf(task) + _tasks.value
     }
 
     fun updateTaskStatus(taskId: String, newStatus: TaskStatus, completionNotes: String = "") {
+        val actor = _currentUser.value ?: return
+        val task = _tasks.value.firstOrNull { it.id == taskId } ?: return
+        if (!isAdministrator() && task.assignedEmployeeId != actor.id) return
         _tasks.value = _tasks.value.map {
             if (it.id == taskId) {
                 it.copy(
@@ -663,6 +667,7 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun reassignTask(taskId: String, employee: User) {
+        if (!isAdministrator() || employee.role != UserRole.EMPLOYEE || employee.status != AccountStatus.APPROVED) return
         _tasks.value = _tasks.value.map {
             if (it.id == taskId) {
                 it.copy(assignedEmployeeId = employee.id, assignedEmployeeName = employee.fullName)
@@ -673,14 +678,17 @@ class NexusRepository private constructor(private val context: Context) {
     // --- Customer Management (CRM) ---
 
     fun addCustomer(customer: IspCustomer) {
+        if (!isAdministrator()) return
         _customers.value = listOf(customer) + _customers.value
     }
 
     fun updateCustomer(customer: IspCustomer) {
+        if (!isAdministrator()) return
         _customers.value = _customers.value.map { if (it.id == customer.id) customer else it }
     }
 
     fun recordCustomerRenewal(customerId: String, paymentMode: PaymentMode) {
+        if (!isAdministrator()) return
         val cust = _customers.value.firstOrNull { it.id == customerId } ?: return
         val cal = getKolkataCalendar()
         cal.add(Calendar.DAY_OF_YEAR, 30)
@@ -709,6 +717,7 @@ class NexusRepository private constructor(private val context: Context) {
     // --- ISP Plans ---
 
     fun addOrUpdatePlan(plan: IspPlan) {
+        if (!isAdministrator()) return
         val current = _plans.value
         val idx = current.indexOfFirst { it.id == plan.id }
         _plans.value = if (idx >= 0) {
@@ -719,12 +728,14 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun deletePlan(planId: String) {
+        if (!isAdministrator()) return
         _plans.value = _plans.value.filter { it.id != planId }
     }
 
     // --- Finance & Accounting (Tally Inspired) ---
 
     fun addTransaction(transaction: AccountingTransaction) {
+        if (!isAdministrator()) return
         _transactions.value = listOf(transaction) + _transactions.value
     }
 
@@ -743,10 +754,12 @@ class NexusRepository private constructor(private val context: Context) {
     // --- Inventory Management ---
 
     fun addInventoryItem(item: InventoryItem) {
+        if (!isAdministrator()) return
         _inventory.value = listOf(item) + _inventory.value
     }
 
     fun updateStock(itemId: String, changeAmount: Int) {
+        if (!isAdministrator() || changeAmount == 0) return
         _inventory.value = _inventory.value.map {
             if (it.id == itemId) {
                 val newAvailable = (it.availableStock + changeAmount).coerceAtLeast(0)
@@ -756,6 +769,7 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun issueEquipment(itemId: String, quantity: Int, recipient: String) {
+        if (!isAdministrator() || quantity <= 0 || recipient.isBlank()) return
         _inventory.value = _inventory.value.map {
             if (it.id == itemId) {
                 val newAvail = (it.availableStock - quantity).coerceAtLeast(0)
@@ -772,6 +786,9 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun updateComplaintStatus(ticketId: String, status: ComplaintStatus, resolution: String = "") {
+        val actor = _currentUser.value ?: return
+        val ticket = _complaints.value.firstOrNull { it.id == ticketId } ?: return
+        if (!isAdministrator() && ticket.assignedTechnicianId != actor.id) return
         val now = System.currentTimeMillis()
         _complaints.value = _complaints.value.map {
             if (it.id == ticketId) {
@@ -785,6 +802,7 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun assignComplaintTechnician(ticketId: String, tech: User) {
+        if (!isAdministrator() || tech.role != UserRole.EMPLOYEE || tech.status != AccountStatus.APPROVED) return
         _complaints.value = _complaints.value.map {
             if (it.id == ticketId) {
                 it.copy(
@@ -799,6 +817,8 @@ class NexusRepository private constructor(private val context: Context) {
     // --- Chat & Announcements ---
 
     fun sendChatMessage(sender: User, content: String, channel: String = "TEAM", isBroadcast: Boolean = false) {
+        if (_currentUser.value?.id != sender.id || content.isBlank()) return
+        if ((isBroadcast || channel == "ANNOUNCEMENT") && !isAdministrator()) return
         val msg = ChatMessage(
             id = "msg_" + UUID.randomUUID().toString().take(8),
             senderId = sender.id,
@@ -815,6 +835,7 @@ class NexusRepository private constructor(private val context: Context) {
     // --- Employee Requests ---
 
     fun submitRequest(employee: User, type: RequestType, title: String, description: String) {
+        if (_currentUser.value?.id != employee.id || title.isBlank() || description.isBlank()) return
         val req = EmployeeRequest(
             id = "req_" + UUID.randomUUID().toString().take(8),
             employeeId = employee.id,
@@ -829,6 +850,7 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun reviewRequest(requestId: String, isApproved: Boolean, adminNotes: String) {
+        if (!isAdministrator()) return
         _requests.value = _requests.value.map {
             if (it.id == requestId) {
                 it.copy(
@@ -855,6 +877,8 @@ class NexusRepository private constructor(private val context: Context) {
         notes: String,
         createdBy: String = "Super Admin"
     ): Result<IspInvoice> {
+        if (!isAdministrator()) return Result.failure(SecurityException("Administrator access required."))
+        if (items.isEmpty() || items.any { it.quantity <= 0 || it.unitRate < 0.0 }) return Result.failure(IllegalArgumentException("Add valid invoice line items."))
         val subtotal = items.sumOf { it.totalAmount }
         val discountedSubtotal = (subtotal - discountAmount).coerceAtLeast(0.0)
         val gstTotal = discountedSubtotal * (gstRatePercent / 100.0)
@@ -903,6 +927,8 @@ class NexusRepository private constructor(private val context: Context) {
         note: String = "Payment received",
         recordedBy: String = "Admin"
     ): Result<IspInvoice> {
+        if (!isAdministrator()) return Result.failure(SecurityException("Administrator access required."))
+        if (amount <= 0.0) return Result.failure(IllegalArgumentException("Payment amount must be greater than zero."))
         val invoice = _invoices.value.firstOrNull { it.id == invoiceId }
             ?: return Result.failure(Exception("Invoice not found."))
 
@@ -954,6 +980,7 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun cancelInvoice(invoiceId: String) {
+        if (!isAdministrator()) return
         _invoices.value = _invoices.value.map {
             if (it.id == invoiceId) it.copy(status = InvoiceStatus.CANCELLED) else it
         }
@@ -987,6 +1014,10 @@ class NexusRepository private constructor(private val context: Context) {
     // --- Staff Management Admin Controls ---
 
     fun suspendEmployeeAccount(userId: String, suspend: Boolean) {
+        val actor = _currentUser.value ?: return
+        val target = _users.value.firstOrNull { it.id == userId } ?: return
+        if (actor.role != UserRole.SUPER_ADMIN && target.role != UserRole.EMPLOYEE) return
+        if (target.role == UserRole.SUPER_ADMIN || target.id == actor.id) return
         _users.value = _users.value.map {
             if (it.id == userId) {
                 it.copy(status = if (suspend) AccountStatus.SUSPENDED else AccountStatus.APPROVED)
@@ -1002,6 +1033,8 @@ class NexusRepository private constructor(private val context: Context) {
         reason: String,
         adminName: String
     ): Result<AttendanceRecord> {
+        if (!isAdministrator()) return Result.failure(SecurityException("Administrator access required."))
+        if (reason.isBlank()) return Result.failure(IllegalArgumentException("A correction reason is required."))
         val existing = _attendanceRecords.value.firstOrNull { it.id == recordId }
             ?: return Result.failure(Exception("Attendance record not found."))
 
@@ -1042,6 +1075,7 @@ class NexusRepository private constructor(private val context: Context) {
         fileSizeBytes: Long = 2_500_000L,
         fileUri: String = ""
     ): MediaItem {
+        require(_currentUser.value?.id == uploader.id) { "You can only upload media under your signed-in account." }
         val newItem = MediaItem(
             id = "med_" + UUID.randomUUID().toString().take(8),
             title = title.trim(),
@@ -1069,10 +1103,14 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun deleteMediaItem(mediaId: String) {
+        val actor = _currentUser.value ?: return
+        val item = _mediaItems.value.firstOrNull { it.id == mediaId } ?: return
+        if (!isAdministrator() && item.uploaderId != actor.id) return
         _mediaItems.value = _mediaItems.value.filter { it.id != mediaId }
     }
 
     fun updateMediaApprovalStatus(mediaId: String, status: MediaApprovalStatus) {
+        if (!isAdministrator()) return
         _mediaItems.value = _mediaItems.value.map {
             if (it.id == mediaId) it.copy(approvalStatus = status) else it
         }
@@ -1085,6 +1123,7 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun createMediaAlbum(name: String, description: String, category: MediaCategory, createdBy: String): MediaAlbum {
+        check(isAdministrator()) { "Administrator access required." }
         val album = MediaAlbum(
             id = "alb_" + UUID.randomUUID().toString().take(8),
             name = name.trim(),
