@@ -145,8 +145,8 @@ data class IspCustomer(
     val installationDate: String,
     val expiryDate: String,
     val connectionType: String = "FTTH Fiber",
-    val ipAddress: String = "192.168.1.100",
-    val onuMacAddress: String = "D4:6E:0E:12:34:56",
+    val ipAddress: String = "",
+    val onuMacAddress: String = "",
     val assignedEmployeeId: String = "",
     val status: CustomerStatus = CustomerStatus.ACTIVE
 )
@@ -156,13 +156,13 @@ data class IspPlan(
     val name: String,
     val provider: String,
     val speedMbps: Int,
-    val dataLimit: String = "Unlimited High Speed",
+    val dataLimit: String = "Not specified",
     val monthlyPriceInr: Double,
     val gstPercent: Double = 18.0,
     val validityDays: Int = 30,
-    val iptvIncluded: Boolean = true,
-    val channelCount: Int = 350,
-    val description: String = "High speed symmetrical fiber broadband"
+    val iptvIncluded: Boolean = false,
+    val channelCount: Int = 0,
+    val description: String = ""
 )
 
 enum class TransactionType {
@@ -200,7 +200,7 @@ data class SalarySlip(
     val advanceDeduction: Double = 0.0,
     val bonusAmount: Double = 0.0,
     val netSalary: Double,
-    val status: String = "PAID",
+    val status: String = "PENDING",
     val paymentDateMillis: Long = System.currentTimeMillis()
 )
 
@@ -377,8 +377,8 @@ data class MediaItem(
     val type: MediaType,
     val category: MediaCategory,
     val fileUri: String = "",
-    val resolution: String = "1920x1080",
-    val fileSizeBytes: Long = 2_500_000L,
+    val resolution: String = "",
+    val fileSizeBytes: Long = 0L,
     val durationSeconds: Int = 0, // > 0 for VIDEO
     val tags: List<String> = emptyList(),
     val description: String = "",
