@@ -642,8 +642,7 @@ class NexusRepository private constructor(private val context: Context) {
             _employeeLocations.value = _employeeLocations.value.map {
                 if (it.employeeId == employeeId) it.copy(
                     isLive = status == LocationStatus.LIVE,
-                    locationStatus = status,
-                    timestampMillis = System.currentTimeMillis()
+                    locationStatus = status
                 ) else it
             }
         }
