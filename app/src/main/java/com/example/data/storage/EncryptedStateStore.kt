@@ -18,6 +18,8 @@ import javax.crypto.spec.GCMParameterSpec
 class EncryptedStateStore(context: Context) {
     private val preferences = context.getSharedPreferences("kb_nexus_secure_state", Context.MODE_PRIVATE)
 
+    fun contains(name: String): Boolean = preferences.contains(name)
+
     @Synchronized
     fun getString(name: String): String? {
         val encoded = preferences.getString(name, null) ?: return null
