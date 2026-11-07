@@ -2,6 +2,16 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.data.model.*
+import com.example.data.storage.EncryptedStateStore
+import com.example.security.PasswordHasher
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,6 +23,30 @@ import java.util.TimeZone
 import java.util.UUID
 
 class NexusRepository private constructor(private val context: Context) {
+
+    private val stateStore = EncryptedStateStore(context)
+    private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+    private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private inline fun <reified T : Any> decodeList(key: String): List<T> {
+        val type = Types.newParameterizedType(List::class.java, T::class.java)
+        return runCatching {
+            moshi.adapter<List<T>>(type).fromJson(stateStore.getString(key) ?: "[]") ?: emptyList()
+        }.getOrDefault(emptyList())
+    }
+
+    private inline fun <reified T : Any> persistList(key: String, flow: StateFlow<List<T>>) {
+        val type = Types.newParameterizedType(List::class.java, T::class.java)
+        val adapter = moshi.adapter<List<T>>(type)
+        persistenceScope.launch {
+            flow.collect { records -> stateStore.putString(key, adapter.toJson(records)) }
+        }
+    }
+
+    private fun isAdministrator(): Boolean =
+        _currentUser.value?.role == UserRole.SUPER_ADMIN || _currentUser.value?.role == UserRole.ADMIN
+
+    private fun isSuperAdministrator(): Boolean = _currentUser.value?.role == UserRole.SUPER_ADMIN
 
     companion object {
         @Volatile
@@ -127,700 +161,108 @@ class NexusRepository private constructor(private val context: Context) {
     val mediaAlbums: StateFlow<List<MediaAlbum>> = _mediaAlbums.asStateFlow()
 
     init {
-        seedInitialEnterpriseData()
+        // Start with empty real business records. No fictional staff, customers, invoices,
+        // shifts, locations, chats, media or demo credentials are inserted.
+        _users.value = decodeList("users")
+        _attendanceRecords.value = decodeList("attendance")
+        _employeeLocations.value = decodeList("employee_locations")
+        _tasks.value = decodeList("tasks")
+        _customers.value = decodeList("customers")
+        _plans.value = decodeList("plans")
+        _transactions.value = decodeList("transactions")
+        _salaries.value = decodeList("salaries")
+        _inventory.value = decodeList("inventory")
+        _complaints.value = decodeList("complaints")
+        _chatMessages.value = decodeList("chat_messages")
+        _requests.value = decodeList("employee_requests")
+        _invoices.value = decodeList("invoices")
+        _locationBreadcrumbs.value = decodeList("location_breadcrumbs")
+        _mediaItems.value = decodeList("media_items")
+        _mediaAlbums.value = decodeList("media_albums")
+
+        persistList("users", _users)
+        persistList("attendance", _attendanceRecords)
+        persistList("employee_locations", _employeeLocations)
+        persistList("tasks", _tasks)
+        persistList("customers", _customers)
+        persistList("plans", _plans)
+        persistList("transactions", _transactions)
+        persistList("salaries", _salaries)
+        persistList("inventory", _inventory)
+        persistList("complaints", _complaints)
+        persistList("chat_messages", _chatMessages)
+        persistList("employee_requests", _requests)
+        persistList("invoices", _invoices)
+        persistList("location_breadcrumbs", _locationBreadcrumbs)
+        persistList("media_items", _mediaItems)
+        persistList("media_albums", _mediaAlbums)
         checkAndAutoCloseExpiredShifts()
-    }
-
-    private fun seedInitialEnterpriseData() {
-        val seededUsers = listOf(
-            User(
-                id = "usr_superadmin",
-                fullName = "Sunil Rajput",
-                username = "admin",
-                password = "password123",
-                phone = "+91 98765 43210",
-                email = "sunil@kbnet.com",
-                address = "Head Office, Sector 6, Central Hub",
-                designation = "Super Admin & Director",
-                department = "Executive Management",
-                joiningDate = "2020-01-15",
-                baseSalary = 120000.0,
-                role = UserRole.SUPER_ADMIN,
-                status = AccountStatus.APPROVED,
-                avatarEmoji = "👑"
-            ),
-            User(
-                id = "usr_admin2",
-                fullName = "Pooja Sharma",
-                username = "pooja.admin",
-                password = "password123",
-                phone = "+91 98234 56789",
-                email = "pooja@kbnet.com",
-                address = "Operations Floor, Suite 202",
-                designation = "Operations & CRM Manager",
-                department = "Administration",
-                joiningDate = "2021-03-01",
-                baseSalary = 65000.0,
-                role = UserRole.ADMIN,
-                status = AccountStatus.APPROVED,
-                avatarEmoji = "👩‍💼"
-            ),
-            User(
-                id = "usr_emp_vikram",
-                fullName = "Vikram Singh",
-                username = "vikram",
-                password = "password123",
-                phone = "+91 99112 33445",
-                email = "vikram.field@kbnet.com",
-                address = "Quarter 45, Railway Colony",
-                designation = "Senior Optical Fiber Splicer",
-                department = "Field Technical Ops",
-                joiningDate = "2022-06-10",
-                baseSalary = 34000.0,
-                role = UserRole.EMPLOYEE,
-                status = AccountStatus.APPROVED,
-                avatarEmoji = "👨‍🔧"
-            ),
-            User(
-                id = "usr_emp_rahul",
-                fullName = "Rahul Verma",
-                username = "rahul",
-                password = "password123",
-                phone = "+91 97123 44556",
-                email = "rahul.net@kbnet.com",
-                address = "B-12, Sector 4 Market",
-                designation = "FTTH Installation Engineer",
-                department = "Field Technical Ops",
-                joiningDate = "2023-02-15",
-                baseSalary = 30000.0,
-                role = UserRole.EMPLOYEE,
-                status = AccountStatus.APPROVED,
-                avatarEmoji = "👷"
-            ),
-            User(
-                id = "usr_emp_anita",
-                fullName = "Anita Das",
-                username = "anita",
-                password = "password123",
-                phone = "+91 98665 77889",
-                email = "anita.crm@kbnet.com",
-                address = "Flat 304, Green Heights",
-                designation = "Helpdesk & Billing Officer",
-                department = "Customer Support",
-                joiningDate = "2023-08-01",
-                baseSalary = 28000.0,
-                role = UserRole.EMPLOYEE,
-                status = AccountStatus.APPROVED,
-                avatarEmoji = "👩‍💻"
-            ),
-            User(
-                id = "usr_pending_amit",
-                fullName = "Amit Rawat",
-                username = "amit.r",
-                password = "password123",
-                phone = "+91 95443 22110",
-                email = "amit.rawat@gmail.com",
-                address = "Village Road, Near Old Substation",
-                designation = "Junior Field Technician",
-                department = "Field Technical Ops",
-                joiningDate = "2026-11-01",
-                baseSalary = 22000.0,
-                role = UserRole.EMPLOYEE,
-                status = AccountStatus.PENDING_APPROVAL,
-                registrationReason = "Applied via website for Sector 8 field maintenance",
-                avatarEmoji = "🧑‍🔧"
-            )
-        )
-        _users.value = seededUsers
-        // Default login as Super Admin for instantaneous evaluation
-        _currentUser.value = seededUsers.first()
-
-        val seededPlans = listOf(
-            IspPlan("plan_rail_50", "RailWire 50 Mbps Unlimited", "RailWire / RailTel", 50, "Unlimited", 499.0, 18.0, 30, true, 350, "Symmetrical speed, Free OTT & Live TV"),
-            IspPlan("plan_bsnl_100", "BSNL Bharat Fibre 100M", "BSNL", 100, "3300 GB FUP", 799.0, 18.0, 30, true, 400, "Low latency fiber broadband with Disney+ Hotstar"),
-            IspPlan("plan_air_200", "Air Fibre Turbo 200M", "Air Fibre", 200, "Unlimited", 999.0, 18.0, 30, true, 450, "Wireless & FTTH hybrid gigabit connection"),
-            IspPlan("plan_one_300", "One Broadband Pro 300M", "One Broadband", 300, "Unlimited", 1499.0, 18.0, 30, false, 0, "Commercial dedicated bandwidth with 1 Free Static IP"),
-            IspPlan("plan_tikona_500", "Tikona Enterprise 500M", "Tikona", 500, "Unlimited", 2999.0, 18.0, 30, false, 0, "1:1 Leased line with 99.9% uptime SLA")
-        )
-        _plans.value = seededPlans
-
-        val seededCustomers = listOf(
-            IspCustomer("KB-CUST-101", "Rameshwar Dayal", "+91 98111 22334", "Plot 14, Sector 3 Main Market", "Sector 3", "RailWire / RailTel", "plan_rail_50", "RailWire 50 Mbps Unlimited", 50, 499.0, "2024-01-10", "2026-11-20", "FTTH Fiber", "192.168.10.14", "F4:8E:38:12:AA:01", "usr_emp_vikram", CustomerStatus.ACTIVE),
-            IspCustomer("KB-CUST-102", "Dr. Alok Srivastava", "+91 98222 33445", "House 88, Civil Lines North", "Civil Lines", "BSNL", "plan_bsnl_100", "BSNL Bharat Fibre 100M", 100, 799.0, "2024-03-15", "2026-11-28", "FTTH Fiber", "192.168.10.88", "F4:8E:38:12:AA:02", "usr_emp_rahul", CustomerStatus.ACTIVE),
-            IspCustomer("KB-CUST-103", "Kisan Rice Mill", "+91 98333 44556", "Industrial Area Gate 2", "Industrial Area", "Tikona", "plan_tikona_500", "Tikona Enterprise 500M", 500, 2999.0, "2023-11-01", "2026-11-12", "FTTH Fiber", "103.45.22.12", "D4:6E:0E:99:FF:01", "usr_emp_vikram", CustomerStatus.ACTIVE),
-            IspCustomer("KB-CUST-104", "Priyanka Mehra", "+91 98444 55667", "Apt 204, Royal Palms, Sector 4", "Sector 4", "Air Fibre", "plan_air_200", "Air Fibre Turbo 200M", 200, 999.0, "2024-05-20", "2026-11-04", "Wireless AirFibre", "192.168.12.204", "BC:A8:A6:44:22:11", "usr_emp_rahul", CustomerStatus.EXPIRED),
-            IspCustomer("KB-CUST-105", "Apex Coaching Institute", "+91 98555 66778", "Commercial Complex 2nd Floor", "City Center", "One Broadband", "plan_one_300", "One Broadband Pro 300M", 300, 1499.0, "2024-07-01", "2026-12-01", "FTTH Fiber", "103.45.22.50", "BC:A8:A6:55:33:22", "usr_emp_vikram", CustomerStatus.ACTIVE),
-            IspCustomer("KB-CUST-106", "Sandeep Rawat", "+91 98666 77889", "Gali 3, Subhash Nagar", "Subhash Nagar", "RailWire / RailTel", "plan_rail_50", "RailWire 50 Mbps Unlimited", 50, 499.0, "2024-08-14", "2026-11-15", "FTTH Fiber", "192.168.10.45", "F4:8E:38:99:11:22", "usr_emp_rahul", CustomerStatus.ACTIVE),
-            IspCustomer("KB-CUST-107", "Modern Diagnostic Lab", "+91 98777 88990", "Hospital Road Near Bus Stand", "Civil Lines", "BSNL", "plan_bsnl_100", "BSNL Bharat Fibre 100M", 100, 799.0, "2024-02-18", "2026-11-06", "FTTH Fiber", "192.168.10.92", "D4:6E:0E:11:44:77", "usr_emp_vikram", CustomerStatus.EXPIRED),
-            IspCustomer("KB-CUST-108", "Harsh Vardhan", "+91 98888 99001", "Flat 501, Silver Residency", "Sector 8", "Air Fibre", "plan_air_200", "Air Fibre Turbo 200M", 200, 999.0, "2026-11-06", "2026-12-06", "FTTH Fiber", "192.168.14.10", "Pending Equipment", "usr_emp_rahul", CustomerStatus.PENDING_INSTALL)
-        )
-        _customers.value = seededCustomers
-
-        val now = System.currentTimeMillis()
-        val todayIso = getKolkataDateIso(now)
-        val cal = getKolkataCalendar()
-        cal.set(Calendar.HOUR_OF_DAY, 8)
-        cal.set(Calendar.MINUTE, 30)
-        val morningStart = cal.timeInMillis
-
-        // Vikram has an ongoing shift today
-        val seededAttendance = listOf(
-            AttendanceRecord(
-                id = "att_vikram_today",
-                employeeId = "usr_emp_vikram",
-                employeeName = "Vikram Singh",
-                dateIso = todayIso,
-                shiftStartTimeMillis = morningStart,
-                shiftEndTimeMillis = null,
-                status = ShiftStatus.ACTIVE_SHIFT,
-                durationMinutes = ((now - morningStart) / 60000).coerceAtLeast(15),
-                isAutoClosed = false,
-                isManualClose = false,
-                locationStartLat = 28.6210,
-                locationStartLng = 77.2140
-            ),
-            AttendanceRecord(
-                id = "att_rahul_today",
-                employeeId = "usr_emp_rahul",
-                employeeName = "Rahul Verma",
-                dateIso = todayIso,
-                shiftStartTimeMillis = morningStart + 900000,
-                shiftEndTimeMillis = null,
-                status = ShiftStatus.ACTIVE_SHIFT,
-                durationMinutes = ((now - (morningStart + 900000)) / 60000).coerceAtLeast(10),
-                isAutoClosed = false,
-                isManualClose = false,
-                locationStartLat = 28.6180,
-                locationStartLng = 77.2280
-            ),
-            AttendanceRecord(
-                id = "att_anita_yesterday",
-                employeeId = "usr_emp_anita",
-                employeeName = "Anita Das",
-                dateIso = "2026-11-06",
-                shiftStartTimeMillis = morningStart - 86400000,
-                shiftEndTimeMillis = morningStart - 86400000 + 28800000,
-                status = ShiftStatus.COMPLETED,
-                durationMinutes = 480,
-                isAutoClosed = false,
-                isManualClose = true,
-                locationStartLat = 28.6139,
-                locationStartLng = 77.2090,
-                locationEndLat = 28.6139,
-                locationEndLng = 77.2090
-            )
-        )
-        _attendanceRecords.value = seededAttendance
-
-        val seededLocations = listOf(
-            EmployeeLocation(
-                employeeId = "usr_emp_vikram",
-                employeeName = "Vikram Singh",
-                latitude = 28.6255,
-                longitude = 77.2185,
-                accuracyMeters = 4.2f,
-                timestampMillis = now - 35000, // 35s ago (LIVE)
-                isLive = true,
-                batteryPercent = 92,
-                shiftId = "att_vikram_today",
-                areaDescription = "Sector 3 Fiber Junction Box #4"
-            ),
-            EmployeeLocation(
-                employeeId = "usr_emp_rahul",
-                employeeName = "Rahul Verma",
-                latitude = 28.6140,
-                longitude = 77.2310,
-                accuracyMeters = 6.8f,
-                timestampMillis = now - 70000, // 70s ago (LIVE)
-                isLive = true,
-                batteryPercent = 78,
-                shiftId = "att_rahul_today",
-                areaDescription = "Sector 4 Main Road (Near Tower 2)"
-            ),
-            EmployeeLocation(
-                employeeId = "usr_emp_anita",
-                employeeName = "Anita Das",
-                latitude = 28.6139,
-                longitude = 77.2090,
-                accuracyMeters = 12.0f,
-                timestampMillis = now - 86400000, // Yesterday (LAST KNOWN)
-                isLive = false,
-                batteryPercent = 65,
-                shiftId = "",
-                areaDescription = "Head Office Desk #3"
-            )
-        )
-        _employeeLocations.value = seededLocations
-
-        val seededTasks = listOf(
-            TaskItem(
-                id = "tsk_101",
-                title = "Emergency Optical Fiber Splicing",
-                description = "24-core backbone severed near Sector 4 Flyover by road widening JCB. High loss on 8 nodes.",
-                assignedEmployeeId = "usr_emp_vikram",
-                assignedEmployeeName = "Vikram Singh",
-                createdBy = "Sunil Rajput",
-                priority = TaskPriority.CRITICAL,
-                status = TaskStatus.IN_PROGRESS,
-                deadlineMillis = now + 7200000, // in 2 hours
-                locationAddress = "Sector 4 Flyover Pillar 12",
-                completionNotes = "Spliced 12 cores so far, OTDR testing underway"
-            ),
-            TaskItem(
-                id = "tsk_102",
-                title = "New FTTH Connection Installation",
-                description = "Customer Harsh Vardhan (KB-CUST-108). Route drop cable from Pole 4 to 5th floor flat. Configure Wi-Fi ONT.",
-                assignedEmployeeId = "usr_emp_rahul",
-                assignedEmployeeName = "Rahul Verma",
-                createdBy = "Pooja Sharma",
-                priority = TaskPriority.HIGH,
-                status = TaskStatus.ACCEPTED,
-                deadlineMillis = now + 14400000,
-                customerId = "KB-CUST-108",
-                customerName = "Harsh Vardhan",
-                locationAddress = "Flat 501, Silver Residency, Sector 8"
-            ),
-            TaskItem(
-                id = "tsk_103",
-                title = "Router Upgrade & Optical Power Reading",
-                description = "Customer Kisan Rice Mill (KB-CUST-103) requested gigabit port test and power attenuation check.",
-                assignedEmployeeId = "usr_emp_vikram",
-                assignedEmployeeName = "Vikram Singh",
-                createdBy = "Sunil Rajput",
-                priority = TaskPriority.MEDIUM,
-                status = TaskStatus.COMPLETED,
-                deadlineMillis = now - 3600000,
-                customerId = "KB-CUST-103",
-                customerName = "Kisan Rice Mill",
-                locationAddress = "Industrial Area Gate 2",
-                completionNotes = "Optical power -18.2 dBm. Symmetrical 500 Mbps verified. Signed job sheet uploaded."
-            )
-        )
-        _tasks.value = seededTasks
-
-        val seededTransactions = listOf(
-            AccountingTransaction("TXN-202611-001", TransactionType.INCOME, "Customer Renewal", 3538.0, PaymentMode.UPI, now - 86400000 * 3, "Kisan Rice Mill 500M Monthly Renewal + GST", "KB-CUST-103"),
-            AccountingTransaction("TXN-202611-002", TransactionType.INCOME, "Customer Renewal", 942.0, PaymentMode.CASH, now - 86400000 * 2, "Dr. Alok Srivastava BSNL 100M Renewal", "KB-CUST-102"),
-            AccountingTransaction("TXN-202611-003", TransactionType.INCOME, "New Installation", 2500.0, PaymentMode.UPI, now - 86400000, "Installation & ONT charges Harsh Vardhan", "KB-CUST-108"),
-            AccountingTransaction("TXN-202611-004", TransactionType.EXPENSE, "Bandwidth Uplink", 45000.0, PaymentMode.BANK_TRANSFER, now - 86400000 * 4, "RailTel 10 Gbps POP Bandwidth Monthly Invoice"),
-            AccountingTransaction("TXN-202611-005", TransactionType.EXPENSE, "Equipment Purchase", 18500.0, PaymentMode.BANK_TRANSFER, now - 86400000 * 2, "10x Syrotech Dual Band Gigabit ONTs from Delhi Wholesale"),
-            AccountingTransaction("TXN-202611-006", TransactionType.EXPENSE, "Fuel & Conveyance", 1800.0, PaymentMode.CASH, now - 14400000, "Field Technician Bike Petrol Allowance (Week 1)")
-        )
-        _transactions.value = seededTransactions
-
-        val seededSalaries = listOf(
-            SalarySlip("SAL-202610-01", "usr_emp_vikram", "Vikram Singh", "October 2026", 34000.0, 26, 208.0, 1000.0, 2500.0, 35500.0, "PAID", now - 86400000 * 7),
-            SalarySlip("SAL-202610-02", "usr_emp_rahul", "Rahul Verma", "October 2026", 30000.0, 25, 200.0, 0.0, 1500.0, 31500.0, "PAID", now - 86400000 * 7),
-            SalarySlip("SAL-202610-03", "usr_emp_anita", "Anita Das", "October 2026", 28000.0, 26, 208.0, 0.0, 1000.0, 29000.0, "PAID", now - 86400000 * 7)
-        )
-        _salaries.value = seededSalaries
-
-        val seededInventory = listOf(
-            InventoryItem("INV-001", "Syrotech GPON 1GE+1FE+WiFi Dual Band ONT", InventoryCategory.ONU_ONT_DEVICE, 40, 18, 22, "Pcs", 8, 1450.0),
-            InventoryItem("INV-002", "TP-Link Archer C6 AC1200 Gigabit Router", InventoryCategory.ROUTER_WIFI6, 25, 12, 13, "Pcs", 5, 2150.0),
-            InventoryItem("INV-003", "Sterlite 2-Core FTTH Drop Fiber Cable Reel", InventoryCategory.FIBER_OPTIC_CABLE, 4000, 1600, 2400, "Meters", 500, 5.5),
-            InventoryItem("INV-004", "SC/UPC Fast Field Mechanical Connectors", InventoryCategory.PATCH_CORD_CONNECTOR, 500, 140, 360, "Pcs", 60, 18.0),
-            InventoryItem("INV-005", "DVP-740 Optical Core Alignment Splicer", InventoryCategory.SPLICING_TOOL_EQUIPMENT, 3, 1, 2, "Sets", 1, 65000.0),
-            InventoryItem("INV-006", "Tri-Wavelength Optical Power Meter & VFL", InventoryCategory.SPLICING_TOOL_EQUIPMENT, 6, 2, 4, "Sets", 2, 2800.0)
-        )
-        _inventory.value = seededInventory
-
-        val seededComplaints = listOf(
-            ComplaintTicket(
-                id = "TKT-801",
-                customerId = "KB-CUST-104",
-                customerName = "Priyanka Mehra",
-                customerPhone = "+91 98444 55667",
-                address = "Apt 204, Royal Palms, Sector 4",
-                issueTitle = "ONT Red Light LOS Blinking",
-                description = "Internet stopped suddenly at 9 AM. LOS red light is continuously blinking on router.",
-                priority = ComplaintPriority.CRITICAL,
-                status = ComplaintStatus.IN_PROGRESS,
-                assignedTechnicianId = "usr_emp_vikram",
-                assignedTechnicianName = "Vikram Singh",
-                createdAtMillis = now - 7200000,
-                resolutionNotes = "Tracing drop fiber from building splitter box."
-            ),
-            ComplaintTicket(
-                id = "TKT-802",
-                customerId = "KB-CUST-101",
-                customerName = "Rameshwar Dayal",
-                customerPhone = "+91 98111 22334",
-                address = "Plot 14, Sector 3 Main Market",
-                issueTitle = "Frequent Packet Drop During Billing Hours",
-                description = "Shop POS payment terminal disconnecting intermittently.",
-                priority = ComplaintPriority.HIGH,
-                status = ComplaintStatus.ASSIGNED,
-                assignedTechnicianId = "usr_emp_rahul",
-                assignedTechnicianName = "Rahul Verma",
-                createdAtMillis = now - 18000000
-            )
-        )
-        _complaints.value = seededComplaints
-
-        val seededChats = listOf(
-            ChatMessage("msg_1", "usr_superadmin", "Sunil Rajput (Super Admin)", UserRole.SUPER_ADMIN, "ANNOUNCEMENT", "📢 Important: BSNL POP maintenance scheduled tonight from 2:00 AM to 4:00 AM. Inquire if any enterprise line reports issues.", now - 14400000, true),
-            ChatMessage("msg_2", "usr_admin2", "Pooja Sharma", UserRole.ADMIN, "TEAM", "Team, please verify all pending customer renewal receipts before 6 PM today.", now - 7200000),
-            ChatMessage("msg_3", "usr_emp_vikram", "Vikram Singh", UserRole.EMPLOYEE, "TEAM", "Sector 4 cut core 1-12 spliced. Loss is -17.5 dBm on all live nodes.", now - 3600000)
-        )
-        _chatMessages.value = seededChats
-
-        val seededRequests = listOf(
-            EmployeeRequest(
-                id = "req_001",
-                employeeId = "usr_emp_rahul",
-                employeeName = "Rahul Verma",
-                type = RequestType.LEAVE_APPLICATION,
-                requestTitle = "Festival Leave on 15th Nov",
-                description = "Requesting 2 days leave for family function in hometown.",
-                requestedDateMillis = now - 86400000,
-                status = RequestStatus.APPROVED,
-                adminDecisionNotes = "Approved by Super Admin. Vikram will cover Sector 4.",
-                reviewedAtMillis = now - 43200000
-            ),
-            EmployeeRequest(
-                id = "req_002",
-                employeeId = "usr_emp_vikram",
-                employeeName = "Vikram Singh",
-                type = RequestType.EQUIPMENT_REQUEST,
-                requestTitle = "New Cleaver Blade for DVP Splicer",
-                description = "Current cleaver blade has exceeded 12,000 cuts and causing high splice loss.",
-                requestedDateMillis = now - 18000000,
-                status = RequestStatus.PENDING_REVIEW
-            )
-        )
-        _requests.value = seededRequests
-
-        // Seeded Location Breadcrumbs (Route History)
-        val seededBreadcrumbs = listOf(
-            LocationBreadcrumb("bc_1", "usr_emp_vikram", 28.6139, 77.2090, 4.0f, now - 7200000, "Depot Check-in"),
-            LocationBreadcrumb("bc_2", "usr_emp_vikram", 28.6180, 77.2120, 5.2f, now - 5400000, "Sector 4 Main Road En Route"),
-            LocationBreadcrumb("bc_3", "usr_emp_vikram", 28.6210, 77.2140, 3.8f, now - 3600000, "Sector 4 Flyover Cut Point"),
-            LocationBreadcrumb("bc_4", "usr_emp_vikram", 28.6240, 77.2165, 4.5f, now - 1800000, "Testing Spliced Cores 1-12"),
-            LocationBreadcrumb("bc_5", "usr_emp_vikram", 28.6255, 77.2185, 4.2f, now - 35000, "Sector 3 Fiber Junction Box #4 (Current)"),
-
-            LocationBreadcrumb("bc_r1", "usr_emp_rahul", 28.6110, 77.2250, 6.0f, now - 5400000, "Sector 8 Depot Start"),
-            LocationBreadcrumb("bc_r2", "usr_emp_rahul", 28.6125, 77.2280, 5.5f, now - 3600000, "Silver Residency Gate Entry"),
-            LocationBreadcrumb("bc_r3", "usr_emp_rahul", 28.6140, 77.2310, 6.8f, now - 70000, "Flat 501 ONT Configuration (Current)")
-        )
-        _locationBreadcrumbs.value = seededBreadcrumbs
-
-        // Seeded Professional Invoices with Multi-Item & GST
-        val seededInvoices = listOf(
-            IspInvoice(
-                id = "inv_001",
-                invoiceNumber = "INV-2026-0001",
-                customerId = "KB-CUST-103",
-                customerName = "Kisan Rice Mill",
-                customerPhone = "+91 98333 44556",
-                customerAddress = "Industrial Area Gate 2",
-                items = listOf(
-                    InvoiceLineItem("item_1", "Tikona Enterprise 500 Mbps Monthly Subscription", "998422", 1, 2999.0, 2999.0)
-                ),
-                subtotal = 2999.0,
-                discountAmount = 0.0,
-                gstRatePercent = 18.0,
-                cgstAmount = 269.91,
-                sgstAmount = 269.91,
-                igstAmount = 0.0,
-                totalAmount = 3538.82,
-                paidAmount = 3538.82,
-                balanceDue = 0.0,
-                status = InvoiceStatus.PAID,
-                invoiceDateMillis = now - (86400000L * 3),
-                dueDateMillis = now + (86400000L * 7),
-                billingPeriodStart = "2026-11-01",
-                billingPeriodEnd = "2026-11-30",
-                payments = listOf(
-                    InvoicePaymentRecord("pay_1", "inv_001", 3538.82, PaymentMode.UPI, "UPI/202611/449102", now - (86400000L * 3), "Full payment via Google Pay")
-                )
-            ),
-            IspInvoice(
-                id = "inv_002",
-                invoiceNumber = "INV-2026-0002",
-                customerId = "KB-CUST-102",
-                customerName = "Dr. Alok Srivastava",
-                customerPhone = "+91 98222 33445",
-                customerAddress = "House 88, Civil Lines North",
-                items = listOf(
-                    InvoiceLineItem("item_2", "BSNL Bharat Fibre 100 Mbps Monthly Renewal", "998422", 1, 799.0, 799.0)
-                ),
-                subtotal = 799.0,
-                discountAmount = 0.0,
-                gstRatePercent = 18.0,
-                cgstAmount = 71.91,
-                sgstAmount = 71.91,
-                igstAmount = 0.0,
-                totalAmount = 942.82,
-                paidAmount = 942.82,
-                balanceDue = 0.0,
-                status = InvoiceStatus.PAID,
-                invoiceDateMillis = now - (86400000L * 2),
-                dueDateMillis = now + (86400000L * 5),
-                billingPeriodStart = "2026-11-01",
-                billingPeriodEnd = "2026-11-30",
-                payments = listOf(
-                    InvoicePaymentRecord("pay_2", "inv_002", 942.82, PaymentMode.CASH, "REC-CASH-8812", now - (86400000L * 2), "Cash collected at clinic")
-                )
-            ),
-            IspInvoice(
-                id = "inv_003",
-                invoiceNumber = "INV-2026-0003",
-                customerId = "KB-CUST-108",
-                customerName = "Harsh Vardhan",
-                customerPhone = "+91 98888 99001",
-                customerAddress = "Flat 501, Silver Residency, Sector 8",
-                items = listOf(
-                    InvoiceLineItem("item_3a", "Air Fibre Turbo 200M (Month 1 Subscription)", "998422", 1, 999.0, 999.0),
-                    InvoiceLineItem("item_3b", "Syrotech GPON Dual Band Wi-Fi ONT Device", "851762", 1, 1450.0, 1450.0),
-                    InvoiceLineItem("item_3c", "FTTH Drop Cable & Precision Installation Setup", "998719", 1, 1000.0, 1000.0)
-                ),
-                subtotal = 3449.0,
-                discountAmount = 0.0,
-                gstRatePercent = 18.0,
-                cgstAmount = 310.41,
-                sgstAmount = 310.41,
-                igstAmount = 0.0,
-                totalAmount = 4069.82,
-                paidAmount = 2500.00,
-                balanceDue = 1569.82,
-                status = InvoiceStatus.PARTIALLY_PAID,
-                invoiceDateMillis = now - 86400000L,
-                dueDateMillis = now + (86400000L * 4),
-                billingPeriodStart = "2026-11-06",
-                billingPeriodEnd = "2026-12-06",
-                notes = "Installation partial advance ₹2,500 collected by technician Rahul Verma. Balance due upon speed sign-off.",
-                payments = listOf(
-                    InvoicePaymentRecord("pay_3", "inv_003", 2500.00, PaymentMode.UPI, "UPI/202611/981244", now - 86400000L, "Installation advance via PhonePe")
-                )
-            ),
-            IspInvoice(
-                id = "inv_004",
-                invoiceNumber = "INV-2026-0004",
-                customerId = "KB-CUST-104",
-                customerName = "Priyanka Mehra",
-                customerPhone = "+91 98444 55667",
-                customerAddress = "Apt 204, Royal Palms, Sector 4",
-                items = listOf(
-                    InvoiceLineItem("item_4", "Air Fibre Turbo 200 Mbps Monthly Plan Renewal", "998422", 1, 999.0, 999.0)
-                ),
-                subtotal = 999.0,
-                discountAmount = 0.0,
-                gstRatePercent = 18.0,
-                cgstAmount = 89.91,
-                sgstAmount = 89.91,
-                igstAmount = 0.0,
-                totalAmount = 1178.82,
-                paidAmount = 0.0,
-                balanceDue = 1178.82,
-                status = InvoiceStatus.UNPAID,
-                invoiceDateMillis = now - (86400000L * 4),
-                dueDateMillis = now + (86400000L * 2),
-                billingPeriodStart = "2026-11-04",
-                billingPeriodEnd = "2026-12-04"
-            ),
-            IspInvoice(
-                id = "inv_005",
-                invoiceNumber = "INV-2026-0005",
-                customerId = "KB-CUST-105",
-                customerName = "Apex Coaching Institute",
-                customerPhone = "+91 98555 66778",
-                customerAddress = "Commercial Complex 2nd Floor, City Center",
-                items = listOf(
-                    InvoiceLineItem("item_5a", "One Broadband Pro 300 Mbps (Quarterly 3 Months)", "998422", 3, 1499.0, 4497.0),
-                    InvoiceLineItem("item_5b", "Dedicated Public Static IP (Quarterly)", "998422", 1, 600.0, 600.0)
-                ),
-                subtotal = 5097.0,
-                discountAmount = 500.0, // Commercial discount
-                gstRatePercent = 18.0,
-                cgstAmount = 413.73,
-                sgstAmount = 413.73,
-                igstAmount = 0.0,
-                totalAmount = 5424.46,
-                paidAmount = 5424.46,
-                balanceDue = 0.0,
-                status = InvoiceStatus.PAID,
-                invoiceDateMillis = now - (86400000L * 5),
-                dueDateMillis = now + (86400000L * 10),
-                billingPeriodStart = "2026-11-01",
-                billingPeriodEnd = "2027-01-31",
-                payments = listOf(
-                    InvoicePaymentRecord("pay_5", "inv_005", 5424.46, PaymentMode.BANK_TRANSFER, "NEFT/HDFC/8839210", now - (86400000L * 5), "HDFC Corporate Net Banking")
-                )
-            )
-        )
-        _invoices.value = seededInvoices
-
-        // Seeded Photo & Video Media Library
-        val seededAlbums = listOf(
-            MediaAlbum("alb_1", "Customer Installations 2026", "Customer premises FTTH fiber drops and optical ONT equipment setups", MediaCategory.CUSTOMER_INSTALLATION, 3),
-            MediaAlbum("alb_2", "Fiber Backbone & Joint Closures", "Backbone splicing, OTDR test traces, and chamber box repairs", MediaCategory.FIBER_SPLICING_WORK, 2),
-            MediaAlbum("alb_3", "Router & Tech Guides", "Staff video tutorials for router configuration and VLAN tagging", MediaCategory.TRAINING_TUTORIAL, 2)
-        )
-        _mediaAlbums.value = seededAlbums
-
-        val seededMedia = listOf(
-            MediaItem(
-                id = "med_001",
-                title = "Harsh Vardhan ONT Optical Power Reading (-18.4 dBm)",
-                type = MediaType.PHOTO,
-                category = MediaCategory.CUSTOMER_INSTALLATION,
-                resolution = "1920x1080",
-                fileSizeBytes = 3_450_000L,
-                tags = listOf("FTTH", "Optical Power", "Sector 8", "Silver Residency"),
-                description = "Signal power calibrated with Tri-Wavelength Optical Power Meter. Loss within optimal range for 200M Air Fibre.",
-                uploaderId = "usr_emp_rahul",
-                uploaderName = "Rahul Verma",
-                uploaderRole = UserRole.EMPLOYEE,
-                customerId = "KB-CUST-108",
-                customerName = "Harsh Vardhan",
-                relatedJobId = "tsk_102",
-                albumName = "Customer Installations 2026",
-                uploadDateMillis = now - 7200000,
-                approvalStatus = MediaApprovalStatus.APPROVED,
-                visualAssetType = "ONT_POWER"
-            ),
-            MediaItem(
-                id = "med_002",
-                title = "Sector 4 Flyover 24-Core Backbone Splice Tray",
-                type = MediaType.PHOTO,
-                category = MediaCategory.FIBER_SPLICING_WORK,
-                resolution = "2400x1600",
-                fileSizeBytes = 4_800_000L,
-                tags = listOf("Fiber Cut", "Emergency", "24 Core", "DVP Splicer"),
-                description = "Cores 1 to 12 spliced inside inline waterproof joint dome closure. Protection heat shrink sleeves applied.",
-                uploaderId = "usr_emp_vikram",
-                uploaderName = "Vikram Singh",
-                uploaderRole = UserRole.EMPLOYEE,
-                relatedJobId = "tsk_101",
-                albumName = "Fiber Backbone & Joint Closures",
-                uploadDateMillis = now - 5400000,
-                approvalStatus = MediaApprovalStatus.APPROVED,
-                visualAssetType = "FIBER_TRAY"
-            ),
-            MediaItem(
-                id = "med_003",
-                title = "Syrotech GPON Dual Band ONT Device Label Verification",
-                type = MediaType.PHOTO,
-                category = MediaCategory.ROUTER_ONT_SETUP,
-                resolution = "1920x1080",
-                fileSizeBytes = 2_100_000L,
-                tags = listOf("Hardware", "MAC Address", "Inventory", "Syrotech"),
-                description = "Barcode, Serial Number, and MAC Address (BC:A8:A6:44:22:11) verified before dispatch.",
-                uploaderId = "usr_emp_rahul",
-                uploaderName = "Rahul Verma",
-                uploaderRole = UserRole.EMPLOYEE,
-                customerId = "KB-CUST-108",
-                customerName = "Harsh Vardhan",
-                albumName = "Customer Installations 2026",
-                uploadDateMillis = now - 86400000,
-                approvalStatus = MediaApprovalStatus.APPROVED,
-                visualAssetType = "ROUTER_LABEL"
-            ),
-            MediaItem(
-                id = "med_004",
-                title = "NOC Central Server Rack & 42U Patch Panel Wiring",
-                type = MediaType.PHOTO,
-                category = MediaCategory.NETWORK_EQUIPMENT,
-                resolution = "3840x2160",
-                fileSizeBytes = 6_200_000L,
-                tags = listOf("NOC Hub", "Rack", "Switch", "Infrastructure"),
-                description = "RailTel & BSNL 10G uplink SFP+ transceivers and Cat6A patch cord cabling at Central Hub.",
-                uploaderId = "usr_superadmin",
-                uploaderName = "Sunil Rajput",
-                uploaderRole = UserRole.SUPER_ADMIN,
-                albumName = "Fiber Backbone & Joint Closures",
-                uploadDateMillis = now - (86400000L * 3),
-                approvalStatus = MediaApprovalStatus.APPROVED,
-                visualAssetType = "NOC_RACK"
-            ),
-            MediaItem(
-                id = "med_005",
-                title = "Signed Job Sheet & Speed Sign-Off (Kisan Rice Mill)",
-                type = MediaType.PHOTO,
-                category = MediaCategory.BUSINESS_DOCUMENT,
-                resolution = "1600x1200",
-                fileSizeBytes = 1_850_000L,
-                tags = listOf("Signed Sheet", "SLA", "Tikona", "500M"),
-                description = "Customer signature on 500 Mbps symmetrical verification and installation handover slip.",
-                uploaderId = "usr_emp_vikram",
-                uploaderName = "Vikram Singh",
-                uploaderRole = UserRole.EMPLOYEE,
-                customerId = "KB-CUST-103",
-                customerName = "Kisan Rice Mill",
-                relatedJobId = "tsk_103",
-                uploadDateMillis = now - (86400000L * 4),
-                approvalStatus = MediaApprovalStatus.APPROVED,
-                visualAssetType = "JOB_SHEET"
-            ),
-            MediaItem(
-                id = "med_006",
-                title = "DVP-740 Optical Core Alignment & Arc Splicing Tutorial",
-                type = MediaType.VIDEO,
-                category = MediaCategory.TRAINING_TUTORIAL,
-                resolution = "1920x1080 (60fps)",
-                fileSizeBytes = 48_500_000L, // 48.5 MB
-                durationSeconds = 135, // 2m 15s
-                tags = listOf("Training", "Splicing", "Video Demo", "Field Guide"),
-                description = "Step-by-step demonstration on stripping fiber buffer, precision cleaving, V-groove cleaning, and electrode arc welding.",
-                uploaderId = "usr_emp_vikram",
-                uploaderName = "Vikram Singh",
-                uploaderRole = UserRole.EMPLOYEE,
-                albumName = "Router & Tech Guides",
-                uploadDateMillis = now - (86400000L * 2),
-                approvalStatus = MediaApprovalStatus.APPROVED,
-                visualAssetType = "VIDEO_SPLICING"
-            ),
-            MediaItem(
-                id = "med_007",
-                title = "TP-Link Archer C6 Dual Band PPPoE & VLAN 100 Setup Guide",
-                type = MediaType.VIDEO,
-                category = MediaCategory.ROUTER_ONT_SETUP,
-                resolution = "1920x1080",
-                fileSizeBytes = 94_000_000L, // 94 MB
-                durationSeconds = 270, // 4m 30s
-                tags = listOf("Configuration", "PPPoE", "VLAN", "Wi-Fi"),
-                description = "Complete setup guide for technicians on configuring PPPoE username/password, binding VLAN 100 on WAN port, and 5GHz SSID security.",
-                uploaderId = "usr_superadmin",
-                uploaderName = "Sunil Rajput",
-                uploaderRole = UserRole.SUPER_ADMIN,
-                albumName = "Router & Tech Guides",
-                uploadDateMillis = now - (86400000L * 5),
-                approvalStatus = MediaApprovalStatus.APPROVED,
-                visualAssetType = "VIDEO_ROUTER"
-            ),
-            MediaItem(
-                id = "med_008",
-                title = "Silver Residency Outdoor Drop Cable Routing & Tension Clamping",
-                type = MediaType.VIDEO,
-                category = MediaCategory.CUSTOMER_INSTALLATION,
-                resolution = "1920x1080",
-                fileSizeBytes = 36_200_000L, // 36.2 MB
-                durationSeconds = 105, // 1m 45s
-                tags = listOf("Drop Cable", "Tension Clamp", "Pole Routing", "Video"),
-                description = "Technique for anchoring 2-core FRP messenger wire to pole hook without bending radius violation.",
-                uploaderId = "usr_emp_rahul",
-                uploaderName = "Rahul Verma",
-                uploaderRole = UserRole.EMPLOYEE,
-                customerId = "KB-CUST-108",
-                customerName = "Harsh Vardhan",
-                albumName = "Customer Installations 2026",
-                uploadDateMillis = now - 18000000,
-                approvalStatus = MediaApprovalStatus.APPROVED,
-                visualAssetType = "VIDEO_POLE"
-            )
-        )
-        _mediaItems.value = seededMedia
     }
 
     // --- Authentication & User Operations ---
 
-    fun login(user: User) {
+    fun authenticate(username: String, password: String, adminOnly: Boolean): Result<User> {
+        if (username.isBlank() || password.isBlank()) {
+            return Result.failure(IllegalArgumentException("Enter your username and password."))
+        }
+        val user = _users.value.firstOrNull {
+            it.username.equals(username.trim(), ignoreCase = true) &&
+                PasswordHasher.verify(password, it.passwordSalt, it.passwordHash)
+        } ?: return Result.failure(IllegalArgumentException("Invalid username or password."))
+
+        if (user.status != AccountStatus.APPROVED) {
+            val message = when (user.status) {
+                AccountStatus.PENDING_APPROVAL -> "Your registration is waiting for Super Admin approval."
+                AccountStatus.REJECTED -> "Your registration was not approved. Contact administration."
+                AccountStatus.SUSPENDED -> "This account is suspended. Contact administration."
+                AccountStatus.APPROVED -> "Account approved."
+            }
+            return Result.failure(IllegalStateException(message))
+        }
+        if (adminOnly && user.role == UserRole.EMPLOYEE) {
+            return Result.failure(SecurityException("This is a staff account. Use Staff Login."))
+        }
         _currentUser.value = user
+        return Result.success(user)
     }
 
     fun logout() {
         _currentUser.value = null
+    }
+
+    fun createInitialSuperAdmin(fullName: String, username: String, password: String): Result<User> {
+        if (_users.value.any { it.role == UserRole.SUPER_ADMIN }) {
+            return Result.failure(SecurityException("The initial Super Admin account has already been created."))
+        }
+        if (fullName.isBlank() || username.isBlank()) {
+            return Result.failure(IllegalArgumentException("Enter the Super Admin name and username."))
+        }
+        if (password.length < 10 || password.none { it.isLetter() } || password.none { it.isDigit() }) {
+            return Result.failure(IllegalArgumentException("Use at least 10 characters with letters and numbers."))
+        }
+        if (_users.value.any { it.username.equals(username.trim(), ignoreCase = true) }) {
+            return Result.failure(IllegalArgumentException("That username is already registered."))
+        }
+        val digest = PasswordHasher.create(password)
+        val user = User(
+            id = "usr_" + UUID.randomUUID().toString(),
+            fullName = fullName.trim(),
+            username = username.trim(),
+            passwordHash = digest.hash,
+            passwordSalt = digest.salt,
+            phone = "",
+            email = "",
+            address = "",
+            designation = "Super Administrator",
+            department = "Executive Management",
+            joiningDate = getKolkataDateIso(),
+            baseSalary = 0.0,
+            role = UserRole.SUPER_ADMIN,
+            status = AccountStatus.APPROVED
+        )
+        _users.value = listOf(user) + _users.value
+        _currentUser.value = user
+        return Result.success(user)
     }
 
     fun registerNewEmployee(
@@ -835,6 +277,12 @@ class NexusRepository private constructor(private val context: Context) {
         reason: String
     ): Result<User> {
         val current = _users.value
+        if (fullName.isBlank() || username.isBlank() || phone.isBlank()) {
+            return Result.failure(IllegalArgumentException("Name, username and phone are required."))
+        }
+        if (password.length < 10 || password.none { it.isLetter() } || password.none { it.isDigit() }) {
+            return Result.failure(IllegalArgumentException("Use at least 10 characters with letters and numbers."))
+        }
         if (current.any { it.username.equals(username, ignoreCase = true) }) {
             return Result.failure(Exception("Username '$username' is already taken."))
         }
@@ -842,11 +290,13 @@ class NexusRepository private constructor(private val context: Context) {
             return Result.failure(Exception("Phone number '$phone' is already registered."))
         }
 
+        val digest = PasswordHasher.create(password)
         val newUser = User(
             id = "usr_" + UUID.randomUUID().toString().take(8),
             fullName = fullName.trim(),
             username = username.trim(),
-            password = password.trim(),
+            passwordHash = digest.hash,
+            passwordSalt = digest.salt,
             phone = phone.trim(),
             email = email.trim(),
             address = address.trim(),
