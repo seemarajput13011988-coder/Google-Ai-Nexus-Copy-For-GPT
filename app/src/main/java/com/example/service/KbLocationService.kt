@@ -143,6 +143,8 @@ class KbLocationService : Service() {
                 employeeId = intent.getStringExtra(EXTRA_EMPLOYEE_ID).orEmpty()
                 employeeName = intent.getStringExtra(EXTRA_EMPLOYEE_NAME).orEmpty()
                 shiftId = intent.getStringExtra(EXTRA_SHIFT_ID).orEmpty()
+                lastBreadcrumbMillis = 0L
+                lastBreadcrumbLocation = null
                 saveActiveSession()
             }
             null -> restoreActiveSession()
