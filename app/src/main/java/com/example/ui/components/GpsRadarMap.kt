@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.EmployeeLocation
+import com.example.data.model.LocationStatus
 import com.example.data.repository.NexusRepository
 import com.example.ui.theme.*
 
