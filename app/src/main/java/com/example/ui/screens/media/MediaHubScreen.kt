@@ -269,7 +269,7 @@ fun MediaHubScreen(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.testTag("upload_media_btn")
             ) {
-                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text("Upload", fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
@@ -304,9 +304,9 @@ fun MediaHubScreen(
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
-                            Text("Company Cloud Storage", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                            Text("Device Media Storage", fontWeight = FontWeight.Black, fontSize = 13.sp)
                             Text(
-                                text = "${String.format(Locale.ENGLISH, "%.1f", totalMb)} MB of 500 GB Secured Cloud Allocation",
+                                text = "${String.format(Locale.ENGLISH, "%.1f", totalMb)} MB stored in this app on this phone",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -331,14 +331,10 @@ fun MediaHubScreen(
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
-                LinearProgressIndicator(
-                    progress = { (totalMb / 500000.0).toFloat().coerceIn(0.01f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = ElectricBlue,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                Text(
+                    text = "Local storage only • Not synced to other devices or Google Cloud",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
