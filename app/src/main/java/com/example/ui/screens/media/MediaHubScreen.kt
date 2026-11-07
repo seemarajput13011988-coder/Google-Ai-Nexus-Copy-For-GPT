@@ -1075,7 +1075,7 @@ fun PhotoPreviewDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(item.title, fontWeight = FontWeight.Black, fontSize = 15.sp, color = Color.White, maxLines = 1)
                         Text(
-                            text = "${item.category.name.replace("_", " ")} • ${item.resolution}",
+                            text = "${item.category.name.replace("_", " ")} • ${item.resolution.ifBlank { "Resolution unavailable" }}",
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8)
                         )
@@ -1099,7 +1099,10 @@ fun PhotoPreviewDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Image Canvas / High-Fidelity Rendering Area
+                val previewBitmap by produceState<Bitmap?>(initialValue = null, key1 = item.fileUri) {
+                    value = if (item.fileUri.isBlank()) null else loadPhotoPreview(item.fileUri)
+                }
+
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -1109,41 +1112,24 @@ fun PhotoPreviewDialog(
                         .rotate(rotationAngle),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(20.dp)
-                    ) {
-                        Box(
+                    if (previewBitmap != null) {
+                        Image(
+                            bitmap = previewBitmap!!.asImageBitmap(),
+                            contentDescription = item.title,
+                            contentScale = ContentScale.Fit,
                             modifier = Modifier
-                                .size((120 * zoomLevel).dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    Brush.radialGradient(
-                                        listOf(ElectricBlue.copy(alpha = 0.4f), Color.Transparent)
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            when (item.visualAssetType) {
-                                "ONT_POWER" -> Icon(Icons.Default.SettingsInputAntenna, contentDescription = null, tint = VividCyan, modifier = Modifier.size((70 * zoomLevel).dp))
-                                "FIBER_TRAY" -> Icon(Icons.Default.Cable, contentDescription = null, tint = GoldenAmber, modifier = Modifier.size((70 * zoomLevel).dp))
-                                "ROUTER_LABEL" -> Icon(Icons.Default.Router, contentDescription = null, tint = MintEmerald, modifier = Modifier.size((70 * zoomLevel).dp))
-                                "NOC_RACK" -> Icon(Icons.Default.Dns, contentDescription = null, tint = ElectricBlue, modifier = Modifier.size((70 * zoomLevel).dp))
-                                else -> Icon(Icons.Default.Image, contentDescription = null, tint = Color.White, modifier = Modifier.size((70 * zoomLevel).dp))
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "HD Proof Preview • ${item.resolution}",
-                            color = Color(0xFF64748B),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    scaleX = zoomLevel
+                                    scaleY = zoomLevel
+                                }
                         )
+                    } else {
                         Text(
-                            text = "Zoom: ${String.format(Locale.ENGLISH, "%.1fx", zoomLevel)} • Rotation: ${rotationAngle.toInt()}°",
-                            color = Color(0xFF475569),
-                            fontSize = 10.sp
+                            text = if (item.fileUri.isBlank()) "No original photo file is attached." else "The original photo could not be opened on this device.",
+                            color = Color.White,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(24.dp)
                         )
                     }
                 }
@@ -1185,11 +1171,15 @@ fun VideoPlayerDialog(
     onDismiss: () -> Unit,
     onShare: () -> Unit
 ) {
-    var isPlaying by remember { mutableStateOf(true) }
-    var currentSeconds by remember { mutableIntStateOf(18) }
-    val totalSeconds = item.durationSeconds.coerceAtLeast(60)
-    var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
-    var isMuted by remember { mutableStateOf(false) }
+    var playbackError by remember { mutableStateOf<String?>(null) }
+    val videoViewRef = remember(item.fileUri) { mutableStateOf<VideoView?>(null) }
+
+    DisposableEffect(item.fileUri) {
+        onDispose {
+            videoViewRef.value?.stopPlayback()
+            videoViewRef.value = null
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1217,7 +1207,7 @@ fun VideoPlayerDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(item.title, fontWeight = FontWeight.Black, fontSize = 15.sp, color = Color.White, maxLines = 1)
                         Text(
-                            text = "K&B Video Player • ${item.resolution} • ${String.format(Locale.ENGLISH, "%.1f MB", item.fileSizeBytes / (1024 * 1024.0))}",
+                            text = "Video • ${item.resolution.ifBlank { "Resolution unavailable" }} • ${String.format(Locale.ENGLISH, "%.1f MB", item.fileSizeBytes / (1024 * 1024.0))} • ${if (item.durationSeconds > 0) "${item.durationSeconds}s" else "Duration unavailable"}",
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8)
                         )
@@ -1234,7 +1224,7 @@ fun VideoPlayerDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Video Display Surface
+                // Real local video playback with Android's media controller.
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -1243,83 +1233,33 @@ fun VideoPlayerDialog(
                         .background(Color.Black),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(ElectricBlue.copy(alpha = 0.8f))
-                                .clickable { isPlaying = !isPlaying },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = "Play/Pause",
-                                tint = Color.White,
-                                modifier = Modifier.size(36.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Text(
-                            text = if (isPlaying) "Streaming Active (1080p 60fps)" else "Playback Paused",
-                            color = VividCyan,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                    if (item.fileUri.isBlank()) {
+                        Text("The original video file is not attached.", color = Color.White)
+                    } else {
+                        AndroidView(
+                            factory = { viewContext ->
+                                VideoView(viewContext).also { videoView ->
+                                    videoViewRef.value = videoView
+                                    val controller = MediaController(viewContext)
+                                    controller.setAnchorView(videoView)
+                                    videoView.setMediaController(controller)
+                                    videoView.setOnErrorListener { _, _, _ ->
+                                        playbackError = "This video could not be played by the device."
+                                        true
+                                    }
+                                    videoView.setOnPreparedListener { player ->
+                                        player.isLooping = false
+                                        videoView.start()
+                                    }
+                                    videoView.setVideoURI(Uri.parse(item.fileUri))
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
-
-                    // Floating Controls at Bottom of screen
-                    Surface(
-                        color = Color.Black.copy(alpha = 0.7f),
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            // Progress Slider
-                            Slider(
-                                value = currentSeconds.toFloat(),
-                                onValueChange = { currentSeconds = it.toInt() },
-                                valueRange = 0f..totalSeconds.toFloat(),
-                                colors = SliderDefaults.colors(thumbColor = VividCyan, activeTrackColor = VividCyan)
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "${currentSeconds / 60}:${String.format("%02d", currentSeconds % 60)} / ${totalSeconds / 60}:${String.format("%02d", totalSeconds % 60)}",
-                                    color = Color.White,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(onClick = { isMuted = !isMuted }) {
-                                        Icon(
-                                            imageVector = if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                                            contentDescription = "Mute",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-
-                                    TextButton(onClick = {
-                                        playbackSpeed = when (playbackSpeed) {
-                                            1.0f -> 1.5f
-                                            1.5f -> 2.0f
-                                            else -> 1.0f
-                                        }
-                                    }) {
-                                        Text("${playbackSpeed}x", color = VividCyan, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                }
+                playbackError?.let {
+                    Text(it, color = CoralRose, style = MaterialTheme.typography.bodySmall)
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
