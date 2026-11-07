@@ -35,6 +35,7 @@ import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.Priority
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 
 /**
@@ -58,7 +59,7 @@ class KbLocationService : Service() {
         override fun run() {
             if (employeeId.isBlank() || shiftId.isBlank()) return
             val calendar = NexusRepository.getKolkataCalendar()
-            val afterRegularEnd = calendar.get(android.icu.util.Calendar.HOUR_OF_DAY) >= 19
+            val afterRegularEnd = calendar.get(Calendar.HOUR_OF_DAY) >= 19
             if (afterRegularEnd) {
                 val repository = KbNexusApp.instance.repository
                 repository.checkAndAutoCloseExpiredShifts()
