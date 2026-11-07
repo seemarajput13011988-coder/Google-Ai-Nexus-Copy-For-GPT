@@ -314,18 +314,23 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun approveEmployeeRegistration(userId: String) {
+        if (!isAdministrator()) return
         _users.value = _users.value.map {
             if (it.id == userId) it.copy(status = AccountStatus.APPROVED) else it
         }
     }
 
     fun rejectEmployeeRegistration(userId: String) {
+        if (!isAdministrator()) return
         _users.value = _users.value.map {
             if (it.id == userId) it.copy(status = AccountStatus.REJECTED) else it
         }
     }
 
     fun updateEmployeeDetails(updatedUser: User) {
+        val actor = _currentUser.value ?: return
+        if (actor.role != UserRole.SUPER_ADMIN && updatedUser.role != UserRole.EMPLOYEE) return
+        if (updatedUser.role == UserRole.SUPER_ADMIN && actor.role != UserRole.SUPER_ADMIN) return
         _users.value = _users.value.map { if (it.id == updatedUser.id) updatedUser else it }
         if (_currentUser.value?.id == updatedUser.id) {
             _currentUser.value = updatedUser
@@ -333,6 +338,8 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun deleteEmployee(userId: String) {
+        if (!isSuperAdministrator()) return
+        if (_users.value.firstOrNull { it.id == userId }?.role == UserRole.SUPER_ADMIN) return
         _users.value = _users.value.filter { it.id != userId }
     }
 
@@ -352,9 +359,20 @@ class NexusRepository private constructor(private val context: Context) {
      */
     fun startEmployeeShift(
         employee: User,
-        lat: Double = 28.6139,
-        lng: Double = 77.2090
+        lat: Double,
+        lng: Double
     ): Result<AttendanceRecord> {
+        val currentCalendar = getKolkataCalendar()
+        val minuteOfDay = currentCalendar.get(Calendar.HOUR_OF_DAY) * 60 + currentCalendar.get(Calendar.MINUTE)
+        if (minuteOfDay !in 480..1140) {
+            return Result.failure(IllegalStateException("Staff shifts can start between 8:00 AM and 7:00 PM. Ask an administrator for an override."))
+        }
+        if (!lat.isFinite() || !lng.isFinite() || lat !in -90.0..90.0 || lng !in -180.0..180.0 || (lat == 0.0 && lng == 0.0)) {
+            return Result.failure(IllegalArgumentException("A valid live GPS fix is required before starting a shift."))
+        }
+        if (_currentUser.value?.id != employee.id) {
+            return Result.failure(SecurityException("Only the signed-in employee can start their own shift."))
+        }
         val todayIso = getKolkataDateIso()
         val existing = _attendanceRecords.value.firstOrNull {
             it.employeeId == employee.id && it.dateIso == todayIso
@@ -408,11 +426,15 @@ class NexusRepository private constructor(private val context: Context) {
      */
     fun endEmployeeShift(
         recordId: String,
-        endLat: Double = 28.6139,
-        endLng: Double = 77.2090
+        endLat: Double = 0.0,
+        endLng: Double = 0.0
     ): Result<AttendanceRecord> {
         val record = _attendanceRecords.value.firstOrNull { it.id == recordId }
             ?: return Result.failure(Exception("Shift record not found."))
+        val actor = _currentUser.value
+        if (actor == null || (actor.id != record.employeeId && actor.role !in setOf(UserRole.ADMIN, UserRole.SUPER_ADMIN))) {
+            return Result.failure(SecurityException("You cannot end another employee's shift."))
+        }
 
         val now = System.currentTimeMillis()
         val durationMins = ((now - record.shiftStartTimeMillis) / 60000).coerceAtLeast(1)
@@ -449,6 +471,8 @@ class NexusRepository private constructor(private val context: Context) {
         customStartMillis: Long,
         reason: String
     ): AttendanceRecord {
+        check(isAdministrator()) { "Administrator access required." }
+        require(reason.isNotBlank()) { "An override reason is required." }
         val dateIso = getKolkataDateIso(customStartMillis)
         val newRecord = AttendanceRecord(
             id = "att_ovr_" + UUID.randomUUID().toString().take(8),
@@ -477,6 +501,8 @@ class NexusRepository private constructor(private val context: Context) {
         customEndMillis: Long,
         reason: String
     ): Result<AttendanceRecord> {
+        if (!isAdministrator()) return Result.failure(SecurityException("Administrator access required."))
+        if (reason.isBlank()) return Result.failure(IllegalArgumentException("An override reason is required."))
         val record = _attendanceRecords.value.firstOrNull { it.id == recordId }
             ?: return Result.failure(Exception("Shift record not found."))
 
@@ -503,6 +529,8 @@ class NexusRepository private constructor(private val context: Context) {
         newEndMillis: Long,
         reason: String
     ): Result<AttendanceRecord> {
+        if (!isAdministrator()) return Result.failure(SecurityException("Administrator access required."))
+        if (reason.isBlank() || newEndMillis <= newStartMillis) return Result.failure(IllegalArgumentException("Enter a valid time range and correction reason."))
         val record = _attendanceRecords.value.firstOrNull { it.id == recordId }
             ?: return Result.failure(Exception("Record not found."))
 
@@ -526,48 +554,48 @@ class NexusRepository private constructor(private val context: Context) {
      * - Does NOT prevent next day's shift.
      */
     fun checkAndAutoCloseExpiredShifts() {
-        val cal = getKolkataCalendar()
-        val currentHour = cal.get(Calendar.HOUR_OF_DAY)
-        val todayIso = getKolkataDateIso()
-
+        val now = System.currentTimeMillis()
+        val todayIso = getKolkataDateIso(now)
         _attendanceRecords.value = _attendanceRecords.value.map { record ->
-            if (record.status == ShiftStatus.ACTIVE_SHIFT) {
-                // If record is from previous days, auto close it at 7:00 PM of that date
-                if (record.dateIso != todayIso) {
-                    val closeTime = record.shiftStartTimeMillis + (8 * 3600000)
-                    record.copy(
-                        shiftEndTimeMillis = closeTime,
-                        status = ShiftStatus.AUTO_CLOSED,
-                        durationMinutes = 480,
-                        isAutoClosed = true
-                    )
-                } else if (currentHour >= 19) {
-                    // Auto close at 7:00 PM today
-                    val closeCal = getKolkataCalendar().apply {
-                        set(Calendar.HOUR_OF_DAY, 19)
-                        set(Calendar.MINUTE, 0)
-                        set(Calendar.SECOND, 0)
-                    }
-                    val closeTime = closeCal.timeInMillis
-                    val duration = ((closeTime - record.shiftStartTimeMillis) / 60000).coerceAtLeast(1)
-                    record.copy(
-                        shiftEndTimeMillis = closeTime,
-                        status = ShiftStatus.AUTO_CLOSED,
-                        durationMinutes = duration,
-                        isAutoClosed = true
-                    )
-                } else {
-                    record
-                }
-            } else {
-                record
+            if (record.status != ShiftStatus.ACTIVE_SHIFT || record.adminOverrideReason.isNotBlank()) {
+                return@map record
             }
+            val shiftDay = getKolkataCalendar().apply { timeInMillis = record.shiftStartTimeMillis }
+            shiftDay.set(Calendar.HOUR_OF_DAY, 19)
+            shiftDay.set(Calendar.MINUTE, 0)
+            shiftDay.set(Calendar.SECOND, 0)
+            shiftDay.set(Calendar.MILLISECOND, 0)
+            val scheduledClose = shiftDay.timeInMillis
+            if (record.dateIso < todayIso || now >= scheduledClose) {
+                val closeTime = maxOf(record.shiftStartTimeMillis, scheduledClose)
+                val duration = ((closeTime - record.shiftStartTimeMillis) / 60000).coerceAtLeast(0)
+                _employeeLocations.value = _employeeLocations.value.map { location ->
+                    if (location.employeeId == record.employeeId) {
+                        location.copy(
+                            isLive = false,
+                            locationStatus = LocationStatus.OFFLINE,
+                            timestampMillis = closeTime,
+                            shiftId = ""
+                        )
+                    } else location
+                }
+                record.copy(
+                    shiftEndTimeMillis = closeTime,
+                    status = ShiftStatus.AUTO_CLOSED,
+                    durationMinutes = duration,
+                    isAutoClosed = true
+                )
+            } else record
         }
     }
+
+    fun isShiftActive(shiftId: String): Boolean =
+        _attendanceRecords.value.any { it.id == shiftId && it.status == ShiftStatus.ACTIVE_SHIFT }
 
     // --- GPS Tracking ---
 
     fun updateLiveLocation(location: EmployeeLocation) {
+        if (location.employeeId.isBlank() || !location.latitude.isFinite() || !location.longitude.isFinite()) return
         val current = _employeeLocations.value
         val existingIndex = current.indexOfFirst { it.employeeId == location.employeeId }
         _employeeLocations.value = if (existingIndex >= 0) {
@@ -575,6 +603,46 @@ class NexusRepository private constructor(private val context: Context) {
         } else {
             current + location
         }
+    }
+
+    fun updateLocationStatus(employeeId: String, status: LocationStatus) {
+        if (employeeId.isBlank()) return
+        val existing = _employeeLocations.value.firstOrNull { it.employeeId == employeeId }
+        if (existing == null) {
+            val employee = _users.value.firstOrNull { it.id == employeeId }
+            _employeeLocations.value = _employeeLocations.value + EmployeeLocation(
+                employeeId = employeeId,
+                employeeName = employee?.fullName ?: "Staff",
+                latitude = 0.0,
+                longitude = 0.0,
+                isLive = false,
+                locationStatus = status,
+                batteryPercent = -1,
+                shiftId = ""
+            )
+        } else {
+            _employeeLocations.value = _employeeLocations.value.map {
+                if (it.employeeId == employeeId) it.copy(
+                    isLive = status == LocationStatus.LIVE,
+                    locationStatus = status,
+                    timestampMillis = System.currentTimeMillis()
+                ) else it
+            }
+        }
+    }
+
+    fun addLocationBreadcrumb(location: EmployeeLocation) {
+        if (!location.latitude.isFinite() || !location.longitude.isFinite()) return
+        val point = LocationBreadcrumb(
+            id = "loc_" + UUID.randomUUID().toString(),
+            employeeId = location.employeeId,
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracyMeters = location.accuracyMeters,
+            timestampMillis = location.timestampMillis,
+            areaNote = location.areaDescription
+        )
+        _locationBreadcrumbs.value = (listOf(point) + _locationBreadcrumbs.value).take(10000)
     }
 
     // --- Task Management ---
