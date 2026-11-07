@@ -298,7 +298,10 @@ class NexusRepository private constructor(private val context: Context) {
             return Result.failure(Exception("Username '$username' is already taken."))
         }
         if (current.any { it.phone == phone }) {
-            return Result.failure(Exception("Phone number '$phone' is already registered."))
+            return Result.failure(Exception("Phone number '$phone' is already registered or has a pending request."))
+        }
+        if (email.isNotBlank() && current.any { it.email.equals(email.trim(), ignoreCase = true) }) {
+            return Result.failure(Exception("This email is already registered or has a pending request."))
         }
 
         val digest = PasswordHasher.create(password)
@@ -751,7 +754,8 @@ class NexusRepository private constructor(private val context: Context) {
 
     fun addTransaction(transaction: AccountingTransaction) {
         if (!isAdministrator()) return
-        _transactions.value = listOf(transaction) + _transactions.value
+        val actorName = _currentUser.value?.fullName ?: return
+        _transactions.value = listOf(transaction.copy(recordedBy = actorName)) + _transactions.value
     }
 
     fun getTotalIncome(): Double {
@@ -797,6 +801,8 @@ class NexusRepository private constructor(private val context: Context) {
     // --- Complaints & Support ---
 
     fun addComplaint(ticket: ComplaintTicket) {
+        val actor = _currentUser.value ?: return
+        if (!isAdministrator() && ticket.assignedTechnicianId != actor.id) return
         _complaints.value = listOf(ticket) + _complaints.value
     }
 
@@ -1136,6 +1142,7 @@ class NexusRepository private constructor(private val context: Context) {
     }
 
     fun toggleMediaFavorite(mediaId: String) {
+        if (_currentUser.value == null) return
         _mediaItems.value = _mediaItems.value.map {
             if (it.id == mediaId) it.copy(isFavorite = !it.isFavorite) else it
         }
