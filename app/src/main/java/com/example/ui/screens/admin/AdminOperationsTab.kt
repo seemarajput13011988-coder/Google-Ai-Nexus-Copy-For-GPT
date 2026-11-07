@@ -35,12 +35,25 @@ fun AdminOperationsTab(
     val complaints by repository.complaints.collectAsState()
     val requests by repository.requests.collectAsState()
     val chats by repository.chatMessages.collectAsState()
+    val users by repository.users.collectAsState()
     val currentUser by repository.currentUser.collectAsState()
 
     var opsTab by remember { mutableIntStateOf(0) } // 0: Complaints, 1: Employee Requests, 2: Announcements & Team Chat
 
     // Broadcast message state
     var broadcastContent by remember { mutableStateOf("") }
+    var editingStaff by remember { mutableStateOf<User?>(null) }
+    var editFullName by remember { mutableStateOf("") }
+    var editPhone by remember { mutableStateOf("") }
+    var editDesignation by remember { mutableStateOf("") }
+    var editDepartment by remember { mutableStateOf("") }
+    var editSalary by remember { mutableStateOf("") }
+    var editError by remember { mutableStateOf<String?>(null) }
+
+    val staffDirectory = remember(users, currentUser) {
+        users.filter { it.role != UserRole.SUPER_ADMIN && (currentUser?.role == UserRole.SUPER_ADMIN || it.role == UserRole.EMPLOYEE) }
+            .sortedBy { it.fullName.lowercase() }
+    }
 
     val pendingRequests = requests.filter { it.status == RequestStatus.PENDING_REVIEW }
 
@@ -95,6 +108,11 @@ fun AdminOperationsTab(
                     selected = opsTab == 2,
                     onClick = { opsTab = 2 },
                     text = { Text("Announcements", fontWeight = FontWeight.Bold, fontSize = 11.sp) }
+                )
+                Tab(
+                    selected = opsTab == 3,
+                    onClick = { opsTab = 3 },
+                    text = { Text("Staff", fontWeight = FontWeight.Bold, fontSize = 11.sp) }
                 )
             }
         }
@@ -415,10 +433,176 @@ fun AdminOperationsTab(
                     }
                 }
             }
+
+            3 -> {
+                item {
+                    Text(
+                        text = "Staff Directory & Access Control",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Black
+                    )
+                    Text(
+                        text = if (currentUser?.role == UserRole.SUPER_ADMIN)
+                            "Manage employee records and admin access. Only the initial Super Admin can promote or remove accounts."
+                        else
+                            "View and update employee records. Admin accounts and role changes are restricted to the Super Admin.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (staffDirectory.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Text(
+                                "No staff accounts yet. New staff registration requests will appear here after approval.",
+                                modifier = Modifier.padding(16.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                items(staffDirectory, key = { it.id }) { staff ->
+                    val statusColor = when (staff.status) {
+                        AccountStatus.APPROVED -> MintEmerald
+                        AccountStatus.PENDING_APPROVAL -> GoldenAmber
+                        AccountStatus.REJECTED, AccountStatus.SUSPENDED -> CoralRose
+                    }
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(staff.fullName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                                    Text(
+                                        text = "${staff.username} • ${staff.designation}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "${staff.department} • ${staff.phone.ifBlank { "Phone not added" }}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    StatusBadge(text = staff.role.name.replace("_", " "), color = if (staff.role == UserRole.ADMIN) RoyalPurple else ElectricBlue)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    StatusBadge(text = staff.status.name.replace("_", " "), color = statusColor)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        editingStaff = staff
+                                        editFullName = staff.fullName
+                                        editPhone = staff.phone
+                                        editDesignation = staff.designation
+                                        editDepartment = staff.department
+                                        editSalary = staff.baseSalary.toString()
+                                        editError = null
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Edit", fontSize = 11.sp)
+                                }
+                                if (staff.status == AccountStatus.APPROVED || staff.status == AccountStatus.SUSPENDED) {
+                                    OutlinedButton(
+                                        onClick = { repository.suspendEmployeeAccount(staff.id, staff.status != AccountStatus.SUSPENDED) },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(if (staff.status == AccountStatus.SUSPENDED) "Reactivate" else "Suspend", fontSize = 11.sp)
+                                    }
+                                }
+                                if (currentUser?.role == UserRole.SUPER_ADMIN && staff.status == AccountStatus.APPROVED) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            repository.updateEmployeeDetails(
+                                                staff.copy(role = if (staff.role == UserRole.ADMIN) UserRole.EMPLOYEE else UserRole.ADMIN)
+                                            )
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(if (staff.role == UserRole.ADMIN) "Make Staff" else "Make Admin", fontSize = 11.sp)
+                                    }
+                                }
+                                if (currentUser?.role == UserRole.SUPER_ADMIN) {
+                                    OutlinedButton(
+                                        onClick = { repository.deleteEmployee(staff.id) },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CoralRose),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("Remove", fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         item {
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    editingStaff?.let { staff ->
+        AlertDialog(
+            onDismissRequest = { editingStaff = null },
+            title = { Text("Edit Staff Record") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = editFullName, onValueChange = { editFullName = it }, label = { Text("Full name") }, singleLine = true)
+                    OutlinedTextField(value = editPhone, onValueChange = { editPhone = it }, label = { Text("Phone") }, singleLine = true)
+                    OutlinedTextField(value = editDesignation, onValueChange = { editDesignation = it }, label = { Text("Designation") }, singleLine = true)
+                    OutlinedTextField(value = editDepartment, onValueChange = { editDepartment = it }, label = { Text("Department") }, singleLine = true)
+                    OutlinedTextField(value = editSalary, onValueChange = { editSalary = it }, label = { Text("Monthly salary (INR)") }, singleLine = true)
+                    editError?.let { Text(it, color = CoralRose, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val salary = editSalary.toDoubleOrNull()
+                    if (editFullName.isBlank() || salary == null || salary < 0.0) {
+                        editError = "Enter a valid name and non-negative salary."
+                    } else {
+                        repository.updateEmployeeDetails(
+                            staff.copy(
+                                fullName = editFullName.trim(),
+                                phone = editPhone.trim(),
+                                designation = editDesignation.trim(),
+                                department = editDepartment.trim(),
+                                baseSalary = salary
+                            )
+                        )
+                        editingStaff = null
+                    }
+                }) { Text("Save changes") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingStaff = null }) { Text("Cancel") }
+            }
+        )
     }
 }
