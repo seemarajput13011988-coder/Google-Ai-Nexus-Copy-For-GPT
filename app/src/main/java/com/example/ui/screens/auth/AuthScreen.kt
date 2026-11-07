@@ -49,6 +49,7 @@ fun AuthScreen(
     // Admin Login Fields
     var adminUsername by remember { mutableStateOf("") }
     var adminPassword by remember { mutableStateOf("") }
+    var initialAdminName by remember { mutableStateOf("") }
     var adminPasswordVisible by remember { mutableStateOf(false) }
     var adminError by remember { mutableStateOf<String?>(null) }
 
@@ -347,20 +348,14 @@ fun AuthScreen(
 
                             Button(
                                 onClick = {
-                                    val matchedUser = users.firstOrNull {
-                                        it.username.equals(adminUsername.trim(), ignoreCase = true) &&
-                                                it.password == adminPassword.trim()
-                                    }
-                                    if (matchedUser == null) {
-                                        adminError = "Invalid admin username or password."
-                                    } else if (matchedUser.role == UserRole.EMPLOYEE) {
-                                        adminError = "Access Denied: This account is registered as Staff. Please use the Staff Login tab."
-                                    } else if (matchedUser.status != AccountStatus.APPROVED) {
-                                        adminError = "Admin account status is ${matchedUser.status}. Contact Super Admin."
-                                    } else {
-                                        repository.login(matchedUser)
-                                        onLoginSuccess(matchedUser)
-                                    }
+                                    repository.authenticate(adminUsername, adminPassword, adminOnly = true)
+                                        .onSuccess { authenticatedUser ->
+                                            adminError = null
+                                            onLoginSuccess(authenticatedUser)
+                                        }
+                                        .onFailure { error ->
+                                            adminError = error.message ?: "Unable to sign in."
+                                        }
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -376,36 +371,48 @@ fun AuthScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Hint Chips for Quick Testing
-                            Text(
-                                text = "Quick Fill Credentials for Testing:",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                AssistChip(
-                                    onClick = {
-                                        adminUsername = "admin"
-                                        adminPassword = "password123"
-                                        adminError = null
-                                    },
-                                    label = { Text("Super Admin (admin)", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                    leadingIcon = { Text("👑", fontSize = 12.sp) }
+                            if (users.none { it.role == UserRole.SUPER_ADMIN }) {
+                                Divider(modifier = Modifier.padding(vertical = 12.dp))
+                                Text(
+                                    text = "First-time Super Admin setup",
+                                    fontWeight = FontWeight.Bold,
+                                    color = ElectricBlue,
+                                    fontSize = 14.sp
                                 )
-                                AssistChip(
-                                    onClick = {
-                                        adminUsername = "pooja.admin"
-                                        adminPassword = "password123"
-                                        adminError = null
-                                    },
-                                    label = { Text("Admin (pooja.admin)", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                    leadingIcon = { Text("👩‍💼", fontSize = 12.sp) }
+                                Text(
+                                    text = "Create the single initial owner account. Admin creation is locked after this setup.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
                                 )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = initialAdminName,
+                                    onValueChange = { initialAdminName = it; adminError = null },
+                                    label = { Text("Super Admin full name") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Button(
+                                    onClick = {
+                                        repository.createInitialSuperAdmin(initialAdminName, adminUsername, adminPassword)
+                                            .onSuccess { created ->
+                                                adminError = null
+                                                onLoginSuccess(created)
+                                            }
+                                            .onFailure { error ->
+                                                adminError = error.message ?: "Unable to create the initial administrator."
+                                            }
+                                    },
+                                    enabled = initialAdminName.isNotBlank() && adminUsername.isNotBlank() && adminPassword.isNotBlank(),
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = RoyalPurple),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(Icons.Default.AdminPanelSettings, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Create Initial Super Admin", fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -512,22 +519,19 @@ fun AuthScreen(
 
                             Button(
                                 onClick = {
-                                    val matchedUser = users.firstOrNull {
-                                        it.username.equals(staffUsername.trim(), ignoreCase = true) &&
-                                                it.password == staffPassword.trim()
-                                    }
-                                    if (matchedUser == null) {
-                                        staffError = "Invalid staff username or password."
-                                    } else if (matchedUser.status == AccountStatus.PENDING_APPROVAL) {
-                                        staffError = "Your staff registration request is currently PENDING approval from the Super Admin."
-                                    } else if (matchedUser.status == AccountStatus.SUSPENDED) {
-                                        staffError = "Your staff account has been suspended. Please contact head office."
-                                    } else if (matchedUser.status == AccountStatus.REJECTED) {
-                                        staffError = "Your registration request was not approved. Please contact administration."
-                                    } else {
-                                        repository.login(matchedUser)
-                                        onLoginSuccess(matchedUser)
-                                    }
+                                    repository.authenticate(staffUsername, staffPassword, adminOnly = false)
+                                        .onSuccess { authenticatedUser ->
+                                            if (authenticatedUser.role == UserRole.EMPLOYEE) {
+                                                staffError = null
+                                                onLoginSuccess(authenticatedUser)
+                                            } else {
+                                                repository.logout()
+                                                staffError = "Administrator accounts must use Admin Login."
+                                            }
+                                        }
+                                        .onFailure { error ->
+                                            staffError = error.message ?: "Unable to sign in."
+                                        }
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -543,37 +547,6 @@ fun AuthScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Hint Chips for Quick Staff Testing
-                            Text(
-                                text = "Quick Fill Credentials for Testing:",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                AssistChip(
-                                    onClick = {
-                                        staffUsername = "vikram"
-                                        staffPassword = "password123"
-                                        staffError = null
-                                    },
-                                    label = { Text("Vikram (Splicer)", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                    leadingIcon = { Text("⚡", fontSize = 12.sp) }
-                                )
-                                AssistChip(
-                                    onClick = {
-                                        staffUsername = "rahul"
-                                        staffPassword = "password123"
-                                        staffError = null
-                                    },
-                                    label = { Text("Rahul (Field Tech)", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                    leadingIcon = { Text("🛠️", fontSize = 12.sp) }
-                                )
-                            }
                         }
                     }
                 }
