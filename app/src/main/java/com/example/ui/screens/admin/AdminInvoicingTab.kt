@@ -1,6 +1,12 @@
 package com.example.ui.screens.admin
 
+import android.content.Context
 import android.content.Intent
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
+import android.widget.Toast
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,6 +43,116 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.io.File
+import java.io.FileOutputStream
+
+
+private fun createTaxInvoicePdf(context: Context, invoice: IspInvoice): android.net.Uri {
+    val document = PdfDocument()
+    val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+    var pageNumber = 0
+    var page = document.startPage(pageInfo)
+    var canvas = page.canvas
+    var y = 48f
+
+    val regular = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(30, 41, 59)
+        textSize = 10f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+    }
+    val bold = Paint(regular).apply { typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD) }
+    val title = Paint(bold).apply { textSize = 20f; color = android.graphics.Color.rgb(15, 23, 42) }
+    val muted = Paint(regular).apply { color = android.graphics.Color.rgb(100, 116, 139); textSize = 9f }
+    val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(203, 213, 225)
+        strokeWidth = 1f
+    }
+    val money = { value: Double -> "₹" + String.format(Locale.ENGLISH, "%,.2f", value) }
+
+    fun newPage() {
+        document.finishPage(page)
+        pageNumber += 1
+        page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber + 1).create())
+        canvas = page.canvas
+        y = 48f
+    }
+    fun line() {
+        canvas.drawLine(40f, y, 555f, y, linePaint)
+        y += 16f
+    }
+    fun write(value: String, paint: Paint = regular, x: Float = 40f, advance: Float = 16f) {
+        canvas.drawText(value.take(105), x, y, paint)
+        y += advance
+    }
+    fun tableHeader() {
+        canvas.drawRect(40f, y - 12f, 555f, y + 8f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(226, 232, 240) })
+        write("DESCRIPTION", bold, 46f, 20f)
+        canvas.drawText("QTY", 350f, y - 4f, bold)
+        canvas.drawText("RATE", 405f, y - 4f, bold)
+        canvas.drawText("AMOUNT", 490f, y - 4f, bold)
+        y += 8f
+        line()
+    }
+
+    try {
+        write("K&B NET SERVICE", title, advance = 24f)
+        write("TAX INVOICE", bold, advance = 18f)
+        write("Invoice No: ${invoice.invoiceNumber}", regular, advance = 15f)
+        write("Invoice Date: ${SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(invoice.invoiceDateMillis))}", regular, advance = 15f)
+        write("Due Date: ${SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(invoice.dueDateMillis))}", regular, advance = 18f)
+        line()
+        write("BILL TO", bold, advance = 16f)
+        write(invoice.customerName, regular, advance = 14f)
+        if (invoice.customerPhone.isNotBlank()) write("Phone: ${invoice.customerPhone}", regular, advance = 14f)
+        if (invoice.customerAddress.isNotBlank()) {
+            invoice.customerAddress.split("\n").forEach { write(it, regular, advance = 14f) }
+        }
+        if (invoice.billingPeriodStart.isNotBlank() || invoice.billingPeriodEnd.isNotBlank()) {
+            write("Billing period: ${invoice.billingPeriodStart} to ${invoice.billingPeriodEnd}", regular, advance = 16f)
+        }
+        line()
+        tableHeader()
+
+        invoice.items.forEach { item ->
+            if (y > 735f) {
+                newPage()
+                write("K&B NET SERVICE • ${invoice.invoiceNumber} (continued)", bold, advance = 24f)
+                tableHeader()
+            }
+            write(item.description, regular, 46f, 16f)
+            canvas.drawText(item.quantity.toString(), 350f, y - 16f, regular)
+            canvas.drawText(money(item.unitRate), 405f, y - 16f, regular)
+            canvas.drawText(money(item.totalAmount), 490f, y - 16f, regular)
+            if (item.hsnSacCode.isNotBlank()) write("SAC/HSN: ${item.hsnSacCode}", muted, 46f, 14f)
+        }
+        line()
+        write("Subtotal: ${money(invoice.subtotal)}", regular, 360f, 16f)
+        if (invoice.discountAmount > 0.0) write("Discount: -${money(invoice.discountAmount)}", regular, 360f, 16f)
+        if (invoice.cgstAmount > 0.0) write("CGST: ${money(invoice.cgstAmount)}", regular, 360f, 16f)
+        if (invoice.sgstAmount > 0.0) write("SGST: ${money(invoice.sgstAmount)}", regular, 360f, 16f)
+        if (invoice.igstAmount > 0.0) write("IGST: ${money(invoice.igstAmount)}", regular, 360f, 16f)
+        write("TOTAL: ${money(invoice.totalAmount)}", title, 360f, 24f)
+        write("Paid: ${money(invoice.paidAmount)}", regular, 360f, 16f)
+        write("Balance Due: ${money(invoice.balanceDue)}", bold, 360f, 20f)
+        write("Status: ${invoice.status.name.replace("_", " ")}", bold, 360f, 18f)
+        y += 10f
+        if (invoice.notes.isNotBlank()) {
+            write("Notes", bold, advance = 16f)
+            invoice.notes.split("\n").forEach { write(it, regular, advance = 14f) }
+        }
+        y += 14f
+        write("Generated by K&B Nexus • ${invoice.createdBy}", muted, advance = 14f)
+
+        document.finishPage(page)
+        val directory = File(context.filesDir, "invoices").apply { if (!exists()) mkdirs() }
+        val safeName = invoice.invoiceNumber.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val outputFile = File(directory, "$safeName.pdf")
+        FileOutputStream(outputFile).use { document.writeTo(it) }
+        return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outputFile)
+    } finally {
+        document.close()
+    }
+}
 
 @Composable
 fun AdminInvoicingTab(
