@@ -867,13 +867,13 @@ fun UploadMediaDialog(
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 selected = mediaType == MediaType.PHOTO,
-                                onClick = { mediaType = MediaType.PHOTO },
+                                onClick = { mediaType = MediaType.PHOTO; selectedUri = null; selectedFileName = ""; uploadError = null },
                                 label = { Text("📷 Photo Upload", fontWeight = FontWeight.Bold) },
                                 modifier = Modifier.weight(1f)
                             )
                             FilterChip(
                                 selected = mediaType == MediaType.VIDEO,
-                                onClick = { mediaType = MediaType.VIDEO },
+                                onClick = { mediaType = MediaType.VIDEO; selectedUri = null; selectedFileName = ""; uploadError = null },
                                 label = { Text("🎥 Video Upload", fontWeight = FontWeight.Bold) },
                                 modifier = Modifier.weight(1f)
                             )
