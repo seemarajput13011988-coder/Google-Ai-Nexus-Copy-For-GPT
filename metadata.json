@@ -1,0 +1,6 @@
+{
+  "name": "K&B Nexus",
+  "description": "Enterprise Management System for K&B NET SERVICE - Attendance, GPS Tracking, CRM, Billing, Tasks & Operations",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
